@@ -1,5 +1,3 @@
-.github/workflows/sync-gitlab.yml
-
 name: Sync from GitLab
 on:
   schedule:
