@@ -1,0 +1,16 @@
+# Core dependencies for Knowledge Graph generation
+networkx>=3.1
+matplotlib>=3.7.0
+rdflib>=7.0.0
+
+# Neo4j integration
+neo4j>=5.14.0
+
+# FastAPI and dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+
+# Optional: Visualization enhancements
+# plotly>=5.17.0
+# pyvis>=0.3.2
