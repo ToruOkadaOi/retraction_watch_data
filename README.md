@@ -2,6 +2,27 @@
 
 This repository contains the latest dataset from Retraction Watch, generated on 2026-01-30.
 
+## REST API
+
+🚀 **NEW**: A REST API is now available for programmatic access to the retraction data!
+
+- **Documentation**: See [API_README.md](API_README.md) for full API documentation
+- **Examples**: See [EXAMPLES.md](EXAMPLES.md) for usage examples
+- **Quick Start**: Run `./start_api.sh` or `uvicorn api.main:app --host 0.0.0.0 --port 8000`
+- **Swagger UI**: http://localhost:8000/docs (when running)
+- **Docker**: `docker build -t retraction-api . && docker run -p 8000:8000 retraction-api`
+
+### API Features
+
+- Query retractions by author, year, and journal
+- Retrieve specific retraction details by ID
+- List authors with retraction counts
+- List journals with retraction statistics
+- OpenAPI 3.0 compliant with automatic Swagger documentation
+- Pagination support for large result sets
+
+## Data Overview
+
 Research can be modified after publication, including being corrected or retracted. This is a natural part of the research process and important for accurately reporting changes. While members can deliver this information to us, Retraction Watch has also collected a large number of retractions. Many of these have not been reported by our members.
 
 In September 2023, Crossref acquired the Retraction Watch database from the Center of Scientific Integrity and have made it publicly available. The database contains retractions gathered from publisher websites and is updated every working day by Retraction Watch. Some other update types, such as expressions of concern and corrections, are also included in the data, but these are not as comprehensive as retractions. Various methods are used to find retractions, including searching scholarly databases, checking publisher websites, web searches, and reports from the community. For further details, see [this document](https://retractionwatch.com/wp-content/uploads/2023/12/Building-The-Database.pdf).
