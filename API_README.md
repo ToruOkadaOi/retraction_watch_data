@@ -11,15 +11,11 @@ A FastAPI-based REST API for querying the Retraction Watch database. This API pr
 - 📖 **Interactive Swagger documentation** (OpenAPI 3.0)
 - 🐳 **Docker support** for easy deployment
 - ⚡ **Fast queries** with SQLite database backend
+- 🌐 **Multiple deployment options** for preview testing
 
 ## Quick Start
 
-### Prerequisites
-
-- Python 3.11 or higher
-- pip
-
-### Installation
+### Local Development
 
 1. Install dependencies:
 ```bash
@@ -46,6 +42,28 @@ Build and run with Docker:
 docker build -t retraction-api .
 docker run -p 8000:8000 retraction-api
 ```
+
+Or use Docker Compose:
+
+```bash
+docker compose up
+```
+
+### Preview Testing with Public URL
+
+Want to test with a publicly accessible URL? See [PREVIEW_TESTING.md](PREVIEW_TESTING.md) or use our quick methods:
+
+**Instant preview with ngrok:**
+```bash
+./preview_with_ngrok.sh
+```
+
+**Deploy to cloud:**
+- [Railway](https://railway.app/) - Recommended, free tier
+- [Render](https://render.com/) - Free with cold starts
+- [Fly.io](https://fly.io/) - Global edge deployment
+
+See [QUICKSTART_PREVIEW.md](QUICKSTART_PREVIEW.md) for step-by-step instructions.
 
 ## API Documentation
 

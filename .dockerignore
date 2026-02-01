@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Database (will be created on startup)
+*.db
+*.sqlite
+*.sqlite3
+api/*.db
+
+# Documentation (not needed in container)
+*.md
+!API_README.md
+
+# Test files
+test_*.py
+*_test.py
+demo_api.sh
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Deployment configs (not needed in container)
+docker-compose.yml
+railway.json
+render.yaml
+fly.toml
+app.json

@@ -1,0 +1,137 @@
+name: Deploy Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'api/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.github/workflows/deploy-preview.yml'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Initialize database
+        run: |
+          python -m api.database
+      
+      - name: Test API
+        run: |
+          # Start API in background
+          uvicorn api.main:app --host 0.0.0.0 --port 8000 &
+          API_PID=$!
+          
+          # Wait for API to start
+          sleep 10
+          
+          # Test endpoints
+          curl -f http://localhost:8000/ || exit 1
+          curl -f http://localhost:8000/retractions?page_size=5 || exit 1
+          curl -f http://localhost:8000/authors?limit=5 || exit 1
+          
+          # Kill API
+          kill $API_PID
+          
+          echo "✅ All API tests passed!"
+      
+      - name: Build Docker image
+        run: |
+          docker build -t retraction-api:preview .
+      
+      - name: Test Docker image
+        run: |
+          # Start container
+          docker run -d --name test-api -p 8000:8000 retraction-api:preview
+          
+          # Wait for container to start
+          sleep 15
+          
+          # Test endpoints
+          curl -f http://localhost:8000/ || exit 1
+          curl -f http://localhost:8000/retractions?page_size=5 || exit 1
+          
+          # Stop container
+          docker stop test-api
+          docker rm test-api
+          
+          echo "✅ Docker image tests passed!"
+      
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const message = `## 🚀 Preview Deployment Ready!
+            
+            Your API changes have been built and tested successfully!
+            
+            ### ✅ Build Status
+            - Python tests: Passed
+            - Docker build: Passed
+            - API endpoints: Verified
+            
+            ### 🧪 Test Locally
+            
+            \`\`\`bash
+            # Clone and checkout this PR branch
+            git fetch origin pull/${{ github.event.pull_request.number }}/head:pr-${{ github.event.pull_request.number }}
+            git checkout pr-${{ github.event.pull_request.number }}
+            
+            # Start the API
+            ./start_api.sh
+            \`\`\`
+            
+            ### 🌐 Deploy for Preview Testing
+            
+            Choose your preferred deployment method:
+            
+            1. **Quick local preview with ngrok**:
+               \`\`\`bash
+               ./start_api.sh
+               ngrok http 8000
+               \`\`\`
+            
+            2. **Deploy to Railway** (recommended):
+               - Visit [railway.app](https://railway.app/)
+               - Connect this repository
+               - Deploy this branch
+            
+            3. **Deploy to Render**:
+               - Visit [render.com](https://render.com/)
+               - Create new Web Service from this repo
+               - Select this branch
+            
+            4. **Deploy to Fly.io**:
+               \`\`\`bash
+               fly launch
+               fly deploy
+               \`\`\`
+            
+            See [PREVIEW_TESTING.md](PREVIEW_TESTING.md) for detailed instructions.
+            
+            ### 📚 Documentation
+            - [API Documentation](API_README.md)
+            - [Usage Examples](EXAMPLES.md)
+            - [Preview Testing Guide](PREVIEW_TESTING.md)
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: message
+            });

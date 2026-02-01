@@ -8,6 +8,7 @@ This repository contains the latest dataset from Retraction Watch, generated on 
 
 - **Documentation**: See [API_README.md](API_README.md) for full API documentation
 - **Examples**: See [EXAMPLES.md](EXAMPLES.md) for usage examples
+- **Preview Testing**: See [PREVIEW_TESTING.md](PREVIEW_TESTING.md) for deployment options
 - **Quick Start**: Run `./start_api.sh` or `uvicorn api.main:app --host 0.0.0.0 --port 8000`
 - **Swagger UI**: http://localhost:8000/docs (when running)
 - **Docker**: `docker build -t retraction-api . && docker run -p 8000:8000 retraction-api`
@@ -20,6 +21,16 @@ This repository contains the latest dataset from Retraction Watch, generated on 
 - List journals with retraction statistics
 - OpenAPI 3.0 compliant with automatic Swagger documentation
 - Pagination support for large result sets
+
+### Testing with Preview URLs
+
+Want to test the API with a public URL? We support multiple deployment options:
+
+1. **Quick local preview** - Use ngrok: `./preview_with_ngrok.sh`
+2. **Cloud deployment** - Deploy to Railway, Render, or Fly.io
+3. **Docker Compose** - Run with `docker-compose up`
+
+See [PREVIEW_TESTING.md](PREVIEW_TESTING.md) for detailed instructions on all options.
 
 ## Data Overview
 

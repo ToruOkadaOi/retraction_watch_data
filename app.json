@@ -1,0 +1,16 @@
+{
+  "name": "Retraction Watch API",
+  "description": "REST API for querying the Retraction Watch database of retracted research papers",
+  "website": "https://github.com/ToruOkadaOi/retraction_watch_data",
+  "repository": "https://github.com/ToruOkadaOi/retraction_watch_data",
+  "logo": "",
+  "success_url": "/docs",
+  "keywords": ["api", "research", "retractions", "fastapi", "openapi"],
+  "stack": "container",
+  "image": "heroku/python",
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
