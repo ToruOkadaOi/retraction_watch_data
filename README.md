@@ -2,9 +2,9 @@
 
 This repository contains the latest dataset from Retraction Watch, generated on 2026-01-30.
 
-## 🚀 New: Knowledge Graph
+## Knowledge Graph
 
-This repository now includes a comprehensive **Knowledge Graph** implementation that transforms the Retraction Watch data into an interconnected graph structure. See [KNOWLEDGE_GRAPH.md](KNOWLEDGE_GRAPH.md) for details on:
+See [KNOWLEDGE_GRAPH.md](KNOWLEDGE_GRAPH.md) for details on:
 - Graph generation and visualization
 - Neo4j database integration
 - REST API for querying
