@@ -2,6 +2,16 @@
 
 This repository contains the latest dataset from Retraction Watch, generated on 2026-01-30.
 
+## 🚀 New: Knowledge Graph
+
+This repository now includes a comprehensive **Knowledge Graph** implementation that transforms the Retraction Watch data into an interconnected graph structure. See [KNOWLEDGE_GRAPH.md](KNOWLEDGE_GRAPH.md) for details on:
+- Graph generation and visualization
+- Neo4j database integration
+- REST API for querying
+- Automated CI/CD updates
+
+## About the Dataset
+
 Research can be modified after publication, including being corrected or retracted. This is a natural part of the research process and important for accurately reporting changes. While members can deliver this information to us, Retraction Watch has also collected a large number of retractions. Many of these have not been reported by our members.
 
 In September 2023, Crossref acquired the Retraction Watch database from the Center of Scientific Integrity and have made it publicly available. The database contains retractions gathered from publisher websites and is updated every working day by Retraction Watch. Some other update types, such as expressions of concern and corrections, are also included in the data, but these are not as comprehensive as retractions. Various methods are used to find retractions, including searching scholarly databases, checking publisher websites, web searches, and reports from the community. For further details, see [this document](https://retractionwatch.com/wp-content/uploads/2023/12/Building-The-Database.pdf).
