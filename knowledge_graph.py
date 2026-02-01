@@ -340,11 +340,11 @@ class KnowledgeGraphGenerator:
         # Validate edge count
         logger.info(f"Edges recorded in JSON: {edge_count}")
         
-        # Assert that the counts match
+        # Verify that the counts match
         if nx_edge_count != edge_count:
             error_msg = f"Mismatch between graph edges ({nx_edge_count}) and export count ({edge_count})!"
             logger.error(error_msg)
-            raise AssertionError(error_msg)
+            raise ValueError(error_msg)
         
         logger.info(f"JSON export completed: {len(nodes)} nodes, {edge_count} edges")
         logger.info(f"✓ Edge count validation passed")

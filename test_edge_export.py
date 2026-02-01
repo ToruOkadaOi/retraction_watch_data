@@ -48,6 +48,11 @@ def test_edge_export_consistency():
                            'Institution Z', 'Reason 3', 
                            'Publisher A', '2020-03-01', '2021-03-01', 'Canada', 
                            'Subject 1', 'Retraction', 'Article', 'doi:5', 'doi:6', 'No', '', ''])
+            # Test case for multiple edges: same author publishing in same journal twice
+            writer.writerow(['4', 'Test Article 4', 'Test Journal A', 'Author A', 
+                           'Institution X', 'Reason 1', 
+                           'Publisher A', '2020-04-01', '2021-04-01', 'USA', 
+                           'Subject 1', 'Retraction', 'Article', 'doi:7', 'doi:8', 'No', '', ''])
         
         logger.info(f"Created test CSV: {sample_csv}")
         
@@ -67,6 +72,14 @@ def test_edge_export_consistency():
         logger.info(f"  Stats edge count: {stats_edge_count}")
         logger.info(f"  Skipped edges: {generator.stats['skipped_edges']}")
         
+        # Verify MultiDiGraph supports multiple edges between same nodes
+        # Author A should have multiple edges to Institution X
+        author_a_id = 'Author:Author A'
+        institution_x_id = 'Institution:Institution X'
+        multiple_edges = list(generator.graph[author_a_id][institution_x_id].keys())
+        logger.info(f"\nMultiDiGraph Test:")
+        logger.info(f"  Multiple edges between {author_a_id} and {institution_x_id}: {len(multiple_edges)} edges")
+        
         # Export to JSON
         generator.export_to_json(test_output_json)
         
@@ -82,6 +95,11 @@ def test_edge_export_consistency():
         logger.info(f"  JSON edge count: {json_edge_count}")
         logger.info(f"  JSON node count: {json_node_count}")
         logger.info(f"  Metadata edge count: {metadata_edge_count}")
+        
+        # Count multiple edges in JSON for the same node pair
+        edges_author_a_to_inst_x = [e for e in data['edges'] 
+                                    if e['source'] == author_a_id and e['target'] == institution_x_id]
+        logger.info(f"  Multiple edges in JSON for test pair: {len(edges_author_a_to_inst_x)} edges")
         
         # Validate counts match
         success = True
@@ -102,6 +120,13 @@ def test_edge_export_consistency():
             success = False
         else:
             logger.info(f"✓ PASS: Metadata edge count == JSON edges ({metadata_edge_count})")
+        
+        # Verify MultiDiGraph correctly exports multiple edges
+        if len(multiple_edges) != len(edges_author_a_to_inst_x):
+            logger.error(f"❌ FAIL: MultiDiGraph edges ({len(multiple_edges)}) != JSON exported edges ({len(edges_author_a_to_inst_x)})")
+            success = False
+        else:
+            logger.info(f"✓ PASS: MultiDiGraph multiple edges correctly exported ({len(multiple_edges)} edges)")
         
         # Verify sample edges exist in JSON
         logger.info(f"\nSample Edge Validation:")
@@ -155,10 +180,10 @@ def test_with_sample_data():
             with open(test_sample_csv, 'w', encoding='utf-8', newline='') as outfile:
                 writer = csv.writer(outfile)
                 
-                # Copy header and first 100 rows
+                # Copy header and first 100 data rows (101 rows total)
                 for i, row in enumerate(reader):
                     writer.writerow(row)
-                    if i >= 100:  # Header + 100 data rows
+                    if i >= 100:  # Stop after header (row 0) + 100 data rows (rows 1-100)
                         break
         
         logger.info(f"Created test sample CSV with 100 rows")
