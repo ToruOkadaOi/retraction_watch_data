@@ -167,7 +167,7 @@ class Neo4jLoader:
                         # Create relationship
                         query = f"""
                         MATCH (s:{source_type}), (t:{target_type})
-                        WHERE s.name = $source_name OR s.record_id = $source_id
+                        WHERE (s.name = $source_name OR s.record_id = $source_id)
                         AND (t.name = $target_name OR t.record_id = $target_id)
                         CREATE (s)-[r:{edge_type}]->(t)
                         SET r = $properties

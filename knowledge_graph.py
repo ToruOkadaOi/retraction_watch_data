@@ -4,6 +4,12 @@ Knowledge Graph Generator for Retraction Watch Data
 This script parses the retraction_watch.csv dataset and creates a knowledge graph with:
 - Entities: Authors, Articles, Journals, Institutions, Reasons
 - Relationships: Authored_By, Published_In, Affiliated_With, Retracted_For
+
+Schema (relationship directions):
+    (Author)-[:Authored_By]->(Article)
+    (Article)-[:Published_In]->(Journal)
+    (Author)-[:Affiliated_With]->(Institution)
+    (Article)-[:Retracted_For]->(Reason)
 """
 
 import csv
