@@ -43,11 +43,12 @@ A production-ready REST API built with FastAPI that provides programmatic access
 
 ### Technology Stack
 ```
-- FastAPI 0.109.0
+- FastAPI 0.109.1 (patched for ReDoS vulnerability)
 - Uvicorn 0.27.0
 - SQLAlchemy 2.0.25
 - Pydantic 2.5.3
 - Pandas 2.1.4
+- Python-Multipart 0.0.22 (patched for file write, DoS, and ReDoS vulnerabilities)
 - Python 3.11+
 ```
 
