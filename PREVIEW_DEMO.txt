@@ -1,0 +1,192 @@
+════════════════════════════════════════════════════════════════════════════════
+                       PREVIEW URL TESTING - DEMONSTRATION
+════════════════════════════════════════════════════════════════════════════════
+
+Question: "is there a way to test using a preview url?"
+
+Answer: YES! We now support 6 different methods! ✅
+
+════════════════════════════════════════════════════════════════════════════════
+
+METHOD 1: INSTANT PREVIEW WITH NGROK (Fastest - <1 minute)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  $ ./preview_with_ngrok.sh
+  
+  ✅ ngrok is installed
+  ✅ API started successfully
+  
+  Creating public URL for http://localhost:8000
+  
+  📱 Your preview URL: https://abc-def-123.ngrok-free.app
+  
+  Share this URL with anyone for testing!
+  
+  Example usage:
+    curl https://abc-def-123.ngrok-free.app/
+    curl https://abc-def-123.ngrok-free.app/retractions?year=2025
+
+════════════════════════════════════════════════════════════════════════════════
+
+METHOD 2: DOCKER COMPOSE (Production-like - <2 minutes)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  $ docker compose up
+  
+  [+] Running 1/1
+  ✔ Container retraction_watch_data-api-1  Started
+  
+  API is now running at:
+  - http://localhost:8000
+  - http://localhost:8000/docs (Swagger UI)
+
+════════════════════════════════════════════════════════════════════════════════
+
+METHOD 3: RAILWAY (Cloud - Persistent URL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. Visit https://railway.app/
+  2. Sign in with GitHub
+  3. Click "New Project" → "Deploy from GitHub"
+  4. Select: ToruOkadaOi/retraction_watch_data
+  5. ✅ Deploy!
+  
+  Your preview URL: https://retraction-watch-api.railway.app
+  
+  Features:
+  - ✅ Free $5/month credit
+  - ✅ Automatic HTTPS
+  - ✅ Persistent URL
+  - ✅ Auto-deploy on git push
+
+════════════════════════════════════════════════════════════════════════════════
+
+METHOD 4: RENDER (Cloud - Free Tier)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. Visit https://render.com/
+  2. Sign in with GitHub
+  3. New → Web Service
+  4. Connect: ToruOkadaOi/retraction_watch_data
+  5. ✅ Create Web Service
+  
+  Your preview URL: https://retraction-watch-api.onrender.com
+  
+  Note: Free tier sleeps after inactivity (cold start on first request)
+
+════════════════════════════════════════════════════════════════════════════════
+
+METHOD 5: FLY.IO (Global Edge Deployment)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  $ fly launch
+  
+  Creating app in /path/to/retraction_watch_data
+  App will use 'Dockerfile'
+  
+  ? Choose an app name: retraction-watch-api
+  ? Choose a region: Ashburn, Virginia (US)
+  
+  $ fly deploy
+  
+  ==> Monitoring deployment
+  ✅ Deployed successfully
+  
+  Your preview URL: https://retraction-watch-api.fly.dev
+
+════════════════════════════════════════════════════════════════════════════════
+
+METHOD 6: GITHUB ACTIONS (Automated PR Testing)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  When you open a Pull Request, GitHub Actions automatically:
+  
+  1. ✅ Builds the API
+  2. ✅ Tests all endpoints
+  3. ✅ Validates Docker image
+  4. ✅ Posts comment with deployment instructions
+  
+  The PR will get a comment like:
+  
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 🚀 Preview Deployment Ready!                                 │
+  │                                                              │
+  │ ✅ Build Status                                              │
+  │  - Python tests: Passed                                      │
+  │  - Docker build: Passed                                      │
+  │  - API endpoints: Verified                                   │
+  │                                                              │
+  │ 🌐 Deploy for Preview Testing                                │
+  │  - Railway: railway.app (recommended)                        │
+  │  - Render: render.com                                        │
+  │  - Or use: ./preview_with_ngrok.sh                          │
+  └─────────────────────────────────────────────────────────────┘
+
+════════════════════════════════════════════════════════════════════════════════
+
+COMPARISON TABLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Method          Speed    Cost     Persistent    Auto-Deploy   Best For
+─────────────────────────────────────────────────────────────────────────────
+ngrok           ⚡⚡⚡     Free     No*           No            Quick demos
+Docker Compose  ⚡⚡⚡     Free     Local only    No            Local testing
+Railway         ⚡⚡      Free**   Yes           Yes           PR testing
+Render          ⚡       Free     Yes           Yes           Free hosting
+Fly.io          ⚡⚡      Free**   Yes           Yes           Production-like
+GitHub Actions  N/A      Free     N/A           Yes           CI/CD testing
+
+* Persistent URLs require paid ngrok plan
+** Has free tier with limitations
+
+════════════════════════════════════════════════════════════════════════════════
+
+TESTING YOUR PREVIEW URL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Once you have a preview URL, test it:
+
+  # Save your URL
+  PREVIEW="https://your-preview-url.com"
+  
+  # Test root endpoint
+  curl "$PREVIEW/"
+  
+  # Query retractions
+  curl "$PREVIEW/retractions?year=2025&page_size=5"
+  
+  # Get specific retraction
+  curl "$PREVIEW/retractions/69157"
+  
+  # List top authors
+  curl "$PREVIEW/authors?limit=10"
+  
+  # View API documentation
+  open "$PREVIEW/docs"
+
+════════════════════════════════════════════════════════════════════════════════
+
+DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📖 Quick Start:          QUICKSTART_PREVIEW.md
+📖 Full Guide:           PREVIEW_TESTING.md
+📖 Deployment Options:   DEPLOY.md
+📖 API Documentation:    API_README.md
+📖 Usage Examples:       EXAMPLES.md
+
+════════════════════════════════════════════════════════════════════════════════
+
+SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ YES! You can test using preview URLs in 6 different ways
+✅ Instant local preview with ngrok
+✅ Cloud deployments with persistent URLs
+✅ Automated PR testing with GitHub Actions
+✅ Comprehensive documentation provided
+✅ Multiple options for different use cases
+
+Choose the method that best fits your needs!
+
+════════════════════════════════════════════════════════════════════════════════
