@@ -36,7 +36,7 @@ class KnowledgeGraphGenerator:
     
     def __init__(self, csv_path: str = "retraction_watch.csv"):
         self.csv_path = csv_path
-        self.graph = nx.DiGraph()
+        self.graph = nx.MultiDiGraph()  # Changed to MultiDiGraph to support multiple edges between same nodes
         self.stats = {
             'authors': 0,
             'articles': 0,
@@ -47,6 +47,7 @@ class KnowledgeGraphGenerator:
             'published_in': 0,
             'affiliated_with': 0,
             'retracted_for': 0,
+            'skipped_edges': 0,
             'errors': []
         }
         
@@ -75,13 +76,15 @@ class KnowledgeGraphGenerator:
         
         # Verify both nodes exist
         if not self.graph.has_node(from_node):
-            logger.warning(f"Source node not found: {from_node}")
+            logger.warning(f"Source node missing for edge: {from_node} -> {to_node}")
             self.stats['errors'].append(f"Missing source node: {from_node}")
+            self.stats['skipped_edges'] += 1
             return
         
         if not self.graph.has_node(to_node):
-            logger.warning(f"Target node not found: {to_node}")
+            logger.warning(f"Target node missing for edge: {from_node} -> {to_node}")
             self.stats['errors'].append(f"Missing target node: {to_node}")
+            self.stats['skipped_edges'] += 1
             return
         
         self.graph.add_edge(from_node, to_node, type=edge_type, **properties)
@@ -211,6 +214,8 @@ class KnowledgeGraphGenerator:
         logger.info(f"    - Published_In: {self.stats['published_in']}")
         logger.info(f"    - Affiliated_With: {self.stats['affiliated_with']}")
         logger.info(f"    - Retracted_For: {self.stats['retracted_for']}")
+        logger.info(f"  Graph edges (NetworkX): {self.graph.number_of_edges()}")
+        logger.info(f"  Skipped edges: {self.stats['skipped_edges']}")
         logger.info(f"  Errors: {len(self.stats['errors'])}")
         logger.info("=" * 60)
     
@@ -272,40 +277,77 @@ class KnowledgeGraphGenerator:
         logger.info(f"Visualization saved to {output_path}")
     
     def export_to_json(self, output_path: str = "knowledge_graph.json") -> None:
-        """Export graph to JSON format"""
+        """Export graph to JSON format with streamed edge export"""
         logger.info(f"Exporting to JSON: {output_path}")
         
-        # Convert graph to JSON-serializable format
-        data = {
-            'metadata': {
-                'generated_at': datetime.now().isoformat(),
-                'statistics': self.stats
-            },
-            'nodes': [],
-            'edges': []
+        # Get NetworkX edge count for validation
+        nx_edge_count = self.graph.number_of_edges()
+        logger.info(f"NetworkX reports {nx_edge_count} edges in graph")
+        
+        # Prepare metadata
+        metadata = {
+            'generated_at': datetime.now().isoformat(),
+            'statistics': self.stats.copy(),
+            'graph_edge_count': nx_edge_count
         }
         
-        # Add nodes
+        # Prepare nodes list
+        nodes = []
         for node_id in self.graph.nodes():
             node_data = {
                 'id': node_id,
                 'properties': dict(self.graph.nodes[node_id])
             }
-            data['nodes'].append(node_data)
+            nodes.append(node_data)
         
-        # Add edges
-        for source, target in self.graph.edges():
-            edge_data = {
-                'source': source,
-                'target': target,
-                'properties': dict(self.graph[source][target])
-            }
-            data['edges'].append(edge_data)
-        
+        # Stream edges to file to prevent memory issues
+        edge_count = 0
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            # Write metadata and nodes first
+            f.write('{\n')
+            f.write('  "metadata": ')
+            json.dump(metadata, f, ensure_ascii=False)
+            f.write(',\n')
+            f.write('  "nodes": ')
+            json.dump(nodes, f, indent=2, ensure_ascii=False)
+            f.write(',\n')
+            f.write('  "edges": [\n')
+            
+            # Stream edges - for MultiDiGraph, iterate with keys
+            first_edge = True
+            for source, target, key in self.graph.edges(keys=True):
+                edge_count += 1
+                
+                # Get edge data for this specific edge
+                edge_data = {
+                    'source': source,
+                    'target': target,
+                    'properties': dict(self.graph[source][target][key])
+                }
+                
+                # Add comma before all edges except the first
+                if not first_edge:
+                    f.write(',\n')
+                first_edge = False
+                
+                # Write edge with indent
+                f.write('    ')
+                json.dump(edge_data, f, ensure_ascii=False)
+            
+            f.write('\n  ]\n')
+            f.write('}\n')
         
-        logger.info(f"JSON export completed: {len(data['nodes'])} nodes, {len(data['edges'])} edges")
+        # Validate edge count
+        logger.info(f"Edges recorded in JSON: {edge_count}")
+        
+        # Assert that the counts match
+        if nx_edge_count != edge_count:
+            error_msg = f"Mismatch between graph edges ({nx_edge_count}) and export count ({edge_count})!"
+            logger.error(error_msg)
+            raise AssertionError(error_msg)
+        
+        logger.info(f"JSON export completed: {len(nodes)} nodes, {edge_count} edges")
+        logger.info(f"✓ Edge count validation passed")
     
     def export_to_graphml(self, output_path: str = "knowledge_graph.graphml") -> None:
         """Export graph to GraphML format (for Gephi)"""
@@ -338,9 +380,9 @@ class KnowledgeGraphGenerator:
                 if key != 'type' and value:
                     rdf_graph.add((node_uri, RW[key], Literal(value)))
         
-        # Add edges
-        for source, target in self.graph.edges():
-            edge_data = self.graph[source][target]
+        # Add edges - handle MultiDiGraph with keys
+        for source, target, key in self.graph.edges(keys=True):
+            edge_data = self.graph[source][target][key]
             edge_type = edge_data.get('type', 'RelatedTo')
             
             source_uri = URIRef(f"http://retractionwatch.org/resource/{source.replace(':', '/')}")
