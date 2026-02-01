@@ -11,9 +11,20 @@ The API complies with OpenAPI standards and includes automatic Swagger documenta
 from fastapi import FastAPI, HTTPException, Query
 from typing import Optional, List
 from sqlalchemy import func, or_
+from contextlib import asynccontextmanager
 from api.database import get_session, RetractionDB, init_db
 from api.models import Retraction, RetractionList, Author, AuthorList, Journal, JournalList
 import re
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events."""
+    # Startup: Initialize database
+    init_db()
+    yield
+    # Shutdown: Clean up if needed
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -43,13 +54,8 @@ app = FastAPI(
         "name": "Data License",
         "url": "https://retractionwatch.com/",
     },
+    lifespan=lifespan,
 )
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database on startup."""
-    init_db()
 
 
 @app.get("/", tags=["General"])
@@ -112,6 +118,8 @@ async def get_retractions(
             query = query.filter(RetractionDB.author.ilike(f"%{author}%"))
         
         if year:
+            # Note: Using LIKE for year filtering performs a full table scan.
+            # For better performance in production, consider extracting year into a separate indexed column.
             # Extract year from retraction_date (format: M/D/YYYY H:MM)
             query = query.filter(RetractionDB.retraction_date.like(f"%{year}%"))
         

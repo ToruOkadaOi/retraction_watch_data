@@ -10,6 +10,19 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 Base = declarative_base()
 DATABASE_URL = "sqlite:///./api/retractions.db"
 
+# Create engine and session factory once at module level
+_engine = None
+SessionLocal = None
+
+
+def get_engine():
+    """Get database engine (singleton)."""
+    global _engine, SessionLocal
+    if _engine is None:
+        _engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
+    return _engine
+
 
 class RetractionDB(Base):
     """SQLAlchemy model for retraction data."""
@@ -46,7 +59,6 @@ def get_engine():
 def get_session():
     """Get database session."""
     engine = get_engine()
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return SessionLocal()
 
 
