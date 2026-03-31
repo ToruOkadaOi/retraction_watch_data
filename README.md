@@ -1,6 +1,6 @@
 # Retraction Watch Data
 
-This repository contains the latest dataset from Retraction Watch, generated on 2026-03-27.
+This repository contains the latest dataset from Retraction Watch, generated on 2026-03-30.
 
 ## Knowledge Graph
 
