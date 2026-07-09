@@ -77,10 +77,11 @@ python examples.py
 The GitHub Actions workflow automatically:
 1. Detects changes to `retraction_watch.csv`
 2. Regenerates the knowledge graph
-3. Commits updated files
-4. Creates downloadable artifacts
+3. Uploads generated graph files as downloadable workflow artifacts
 
 Workflow: `.github/workflows/knowledge-graph-update.yml`
+
+The `Sync from GitLab` workflow also generates and uploads graph artifacts after syncing a changed dataset.
 
 ### Manual Trigger
 
@@ -117,7 +118,7 @@ retraction_watch_data/
 ├── KNOWLEDGE_GRAPH.md          # Full documentation
 ├── README.md                   # Main README
 ├── retraction_watch.csv        # Source data
-├── outputs/                    # Generated graph files
+├── outputs/                    # Locally generated files or downloaded CI artifacts
 │   ├── knowledge_graph.json
 │   ├── knowledge_graph.graphml
 │   ├── knowledge_graph.rdf
@@ -187,14 +188,16 @@ curl "http://localhost:8000/api/journals/top?limit=20"
 
 If Neo4j is not available, the system automatically falls back to JSON-based queries.
 
+The JSON fallback requires `outputs/knowledge_graph.json` to exist locally. Generate it with `python knowledge_graph.py` or download it from a workflow artifact.
+
 ### Large File Warnings
 
 The full dataset generates large output files:
-- JSON: ~100-200 MB
-- GraphML: ~150-250 MB
-- RDF: ~150-250 MB
+- JSON: ~400-450 MB
+- GraphML: ~350-450 MB
+- RDF: ~350-450 MB
 
-These files are tracked in git but may take time to download/upload.
+These full graph files are not tracked in git because they exceed GitHub's normal file size limit. CI uploads them as workflow artifacts instead.
 
 ### Visualization Performance
 

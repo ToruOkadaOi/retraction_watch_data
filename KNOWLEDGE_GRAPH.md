@@ -94,6 +94,8 @@ This will:
 - `outputs/knowledge_graph.rdf` - RDF/XML format
 - `outputs/knowledge_graph.png` - Sample visualization
 
+In CI, these full graph outputs are uploaded as workflow artifacts instead of committed to the repository because several files exceed GitHub's normal 100 MB file limit.
+
 ### Load into Neo4j (Optional)
 
 If you have Neo4j running:
@@ -120,6 +122,8 @@ uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 Access the API documentation at: http://localhost:8000/docs
+
+If Neo4j is not configured, the API falls back to `outputs/knowledge_graph.json`. That file must be generated locally with `python knowledge_graph.py` or downloaded from a GitHub Actions artifact.
 
 ## API Documentation
 
@@ -223,8 +227,7 @@ python neo4j_integration.py
 The repository includes a GitHub Actions workflow that automatically:
 1. Detects changes to `retraction_watch.csv`
 2. Regenerates the knowledge graph
-3. Commits and pushes updated graph files
-4. Creates artifacts for download
+3. Uploads generated graph files as workflow artifacts
 
 ### Workflow Configuration
 
@@ -233,7 +236,8 @@ File: `.github/workflows/knowledge-graph-update.yml`
 **Triggers:**
 - Push to main branch (when CSV changes)
 - Manual workflow dispatch
-- Daily schedule (2 AM UTC)
+
+The `.github/workflows/sync-gitlab.yml` workflow also generates and uploads graph artifacts after it syncs a changed dataset from GitLab.
 
 **Optional Features** (commented out in workflow):
 - Neo4j loading (requires secrets: NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
@@ -431,6 +435,7 @@ View errors in the console output or check the JSON export's metadata section.
 - **Memory usage**: Graph generation requires ~1-2GB RAM
 - **Neo4j loading**: Takes 10-30 minutes depending on hardware
 - **Visualization**: Only samples 100 nodes by default to avoid rendering issues
+- **Artifact size**: Full JSON, GraphML, and RDF outputs are each several hundred MB, so CI stores them as workflow artifacts instead of git-tracked files
 
 To adjust sampling for visualization:
 ```python

@@ -4,8 +4,17 @@ This repository contains the latest dataset from Retraction Watch, generated on 
 
 ## Knowledge Graph
 
+This repository includes a knowledge graph pipeline for the Retraction Watch dataset. The full graph can be generated locally with:
+
+```bash
+python knowledge_graph.py
+```
+
+GitHub Actions also generates the graph after data updates. Because the full JSON, GraphML, and RDF outputs exceed GitHub's normal file size limit, CI uploads them as workflow artifacts instead of committing them to the repository.
+
 See [KNOWLEDGE_GRAPH.md](KNOWLEDGE_GRAPH.md) for details on:
 - Graph generation and visualization
+- Downloading CI-generated graph artifacts
 - Neo4j database integration
 - REST API for querying
 - Automated CI/CD updates
