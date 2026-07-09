@@ -15,8 +15,9 @@ Schema (relationship directions):
 import csv
 import json
 import logging
+import os
 from typing import Dict, List, Set, Tuple, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import networkx as nx
 from rdflib import Graph, Literal, Namespace, URIRef, RDF, RDFS
 import matplotlib
@@ -274,11 +275,17 @@ class KnowledgeGraphGenerator:
     def export_to_json(self, output_path: str = "knowledge_graph.json") -> None:
         """Export graph to JSON format"""
         logger.info(f"Exporting to JSON: {output_path}")
+        source_date_epoch = os.getenv('SOURCE_DATE_EPOCH')
+        generated_at = (
+            datetime.fromtimestamp(int(source_date_epoch), timezone.utc).isoformat()
+            if source_date_epoch
+            else datetime.now().isoformat()
+        )
         
         # Convert graph to JSON-serializable format
         data = {
             'metadata': {
-                'generated_at': datetime.now().isoformat(),
+                'generated_at': generated_at,
                 'statistics': self.stats
             },
             'nodes': [],
@@ -367,6 +374,7 @@ class KnowledgeGraphGenerator:
 def main():
     """Main execution function"""
     logger.info("Starting Knowledge Graph Generation")
+    os.makedirs("outputs", exist_ok=True)
     
     # Create generator
     generator = KnowledgeGraphGenerator("retraction_watch.csv")
