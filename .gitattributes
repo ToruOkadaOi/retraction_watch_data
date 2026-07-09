@@ -1,0 +1,4 @@
+outputs/knowledge_graph.graphml filter=lfs diff=lfs merge=lfs -text
+outputs/knowledge_graph.json filter=lfs diff=lfs merge=lfs -text
+outputs/knowledge_graph.png filter=lfs diff=lfs merge=lfs -text
+outputs/knowledge_graph.rdf filter=lfs diff=lfs merge=lfs -text
