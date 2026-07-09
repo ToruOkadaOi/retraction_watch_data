@@ -97,7 +97,7 @@ class KnowledgeGraphGenerator:
         logger.info(f"Parsing CSV file: {self.csv_path}")
         
         try:
-            with open(self.csv_path, 'r', encoding='utf-8') as f:
+            with open(self.csv_path, 'r', encoding='cp1252', newline='') as f:
                 reader = csv.DictReader(f)
                 
                 for row_num, row in enumerate(reader, start=2):  # Start at 2 to account for header
