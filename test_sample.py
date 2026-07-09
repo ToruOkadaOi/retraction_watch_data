@@ -18,7 +18,7 @@ def test_with_sample():
     # Create sample CSV
     sample_csv = "sample_data.csv"
     
-    with open("retraction_watch.csv", 'r', encoding='cp1252', newline='') as infile:
+    with open("retraction_watch.csv", 'r', encoding='latin-1', newline='') as infile:
         reader = csv.reader(infile)
         with open(sample_csv, 'w', encoding='utf-8', newline='') as outfile:
             writer = csv.writer(outfile)

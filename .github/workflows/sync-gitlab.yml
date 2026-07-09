@@ -15,14 +15,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Full history
-          lfs: true
           token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git lfs install --local
       
       - name: Sync GitLab data files
         id: sync
@@ -64,16 +62,13 @@ jobs:
           echo "Generating Knowledge Graph from synced retraction_watch.csv..."
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- retraction_watch.csv) python knowledge_graph.py
 
-      - name: Commit Knowledge Graph outputs
+      - name: Upload Knowledge Graph outputs
         if: steps.sync.outputs.data_changed == 'true'
-        run: |
-          git add outputs/
-
-          if git diff --staged --quiet; then
-            echo "No Knowledge Graph output changes to commit"
-          else
-            git commit -m "Update Knowledge Graph - $(date +'%Y-%m-%d %H:%M:%S UTC')"
-          fi
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-graph-outputs
+          path: outputs/knowledge_graph.*
+          retention-days: 30
 
       - name: Push to GitHub
         if: steps.sync.outputs.data_changed == 'true'
