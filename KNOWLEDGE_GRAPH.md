@@ -46,7 +46,7 @@ assigning every country to each institution. Statistics count actual unique grap
 nodes and edges. `Article` counts include every notice type; retraction rankings
 filter `retraction_nature = 'Retraction'`.
 
-JSON metadata contains `schema_version: 2`, a generation timestamp, and graph
+Full-profile JSON metadata contains `schema_version: 2`, a generation timestamp, and graph
 statistics. JSON includes node and relationship properties. RDF resource IDs are
 percent-encoded. RDF exports node properties and relationships; relationship date
 properties remain available in JSON and GraphML.
@@ -62,7 +62,7 @@ python neo4j_integration.py
 
 The password is mandatory. Every node is labeled `RWGraph` and its entity type,
 and stores the stable exported `id`. The loader validates the complete snapshot
-before writing and replaces only `RWGraph` nodes in one transaction. Repeat loads
+before writing. Full-profile imports replace only `RWGraph` nodes in one transaction. Repeat loads
 replace the prior snapshot without duplicates. Errors preserve the prior graph
 and make the CLI exit nonzero. Unmarked nodes are preserved; relationships touching
 replaced nodes are deleted with those nodes. Reserve `RWGraph` for this loader.
@@ -81,7 +81,7 @@ export NEO4J_PASSWORD="your-readonly-password"
 uvicorn api:app --host 127.0.0.1 --port 8000
 ```
 
-Without a working Neo4j connection, queries use the validated schema version 2
+Without a working Neo4j connection, queries use the validated schema version 2 or 3
 file `outputs/knowledge_graph.json`. Generate it locally or download a CI artifact.
 Neo4j queries only read nodes imported by the current loader.
 
@@ -151,3 +151,123 @@ successful generation. GitLab sync compares both staged CSV changes and README
 changes against HEAD, then commits/pushes only when either changed.
 
 See [SECURITY.md](SECURITY.md) for security boundaries and deployment guidance.
+
+## Compact AuraDB Free profile
+
+The `aura` profile retains every notice record and journal. Author and institution
+nodes are created only for exact trimmed names appearing in at least two distinct
+records. Duplicate mentions within one record do not count toward that threshold.
+Reasons and singleton names remain article properties. Rebuilds promote newly
+shared names and demote names no longer shared.
+
+```bash
+python knowledge_graph.py --profile aura
+# To reduce graph size further while preserving all article records:
+python knowledge_graph.py --profile aura --min-shared-records 3
+```
+
+The default compact build writes JSON only, separately under `outputs/aura/`:
+
+- `knowledge_graph.json`: schema version 3, profile `aura`.
+- `aura_report.json`: exact counts, source CSV SHA-256, serialized size and budgets.
+
+The full profile remains the default for `python knowledge_graph.py`. To export
+additional compact formats use `--formats json graphml rdf png`. GraphML encodes
+list properties as JSON strings; RDF emits repeated literals. The source record
+preserves list order, duplicates, and every original column value in all formats.
+
+Each compact article has `author_names`, `institution_names`, and `reason_names`
+string arrays, plus a `source_record` JSON string containing every CSV column,
+including PubMed IDs and any additional fields. Connected Author nodes carry
+`identity_basis: exact_name_string` and a distinct `record_count`; this is a name
+match, not a verified person. Institution names are likewise exact-string groups.
+
+The complete source lists preserve information, but do not create graph paths.
+For example, common reasons stored on two articles do not connect those articles
+through a Reason node. Singletons can still be found through article properties.
+
+Default budgets are **180,000 total nodes** and **360,000 relationships**, below
+Aura Free's hard limits of 200,000/400,000. One import-state node is included in
+the budget, and import preflight also counts unowned database objects. Override
+with `--max-nodes` and `--max-relationships`, up to the hard limits. A budget
+failure aborts generation/import; no articles are silently dropped. The serialized
+file is also checked against 1 GB, but its size is not the Neo4j database size.
+Verify actual storage in Aura after importing; properties, indexes, and internal
+storage add overhead. See [Aura quotas](https://neo4j.com/docs/aura/quotas-and-limits/).
+
+### Import and refresh on Aura
+
+Use a dedicated Aura instance and its encrypted `neo4j+s://...` connection URI:
+
+```bash
+export NEO4J_URI="neo4j+s://your-instance.databases.neo4j.io"
+export NEO4J_USER="neo4j"
+export NEO4J_PASSWORD="your-instance-password"
+python neo4j_integration.py --json outputs/aura/knowledge_graph.json --mode aura
+```
+
+Compact snapshots automatically select bounded Aura mode even without `--mode`.
+The loader validates the source lists and the entire expected compact topology
+before writes. Imports use independently committed batches (default 500 objects,
+configurable with `--batch-size`, maximum 1000). This bounds transaction memory and
+avoids storing two copies of the graph inside the free-tier quotas.
+
+**Refreshes require maintenance time.** Once import begins, the API's data
+endpoints and `/ready` return 503. The old managed graph is removed in batches,
+the new graph is inserted, counts are checked, and readiness is restored only at
+completion. This mode does not preserve the old graph on failure: it leaves a
+failed/loading marker and the API stays unavailable. Rerun the same import to
+clear partial data and rebuild. Failed imports can be retried immediately; after
+an abrupt process crash, wait for the five-minute lease to expire. An active
+import lease prevents a second cooperating importer from starting. Do not write
+to this managed graph outside the loader.
+
+Full-profile imports retain their previous single-transaction replacement mode.
+The API checks the import generation before and after each Neo4j query and rejects
+responses that crossed a refresh. It does not fall back to potentially stale JSON
+when the database explicitly reports an incomplete refresh. Direct Neo4j clients
+must also honor the `RWImportState` status or avoid querying during refreshes.
+
+### Serve the compact graph
+
+The API works with either Neo4j or a compact JSON artifact:
+
+```bash
+# JSON only:
+GRAPH_JSON_PATH=outputs/aura/knowledge_graph.json python api.py
+# Aura only: configure NEO4J_* above and disable loading a JSON fallback on the VPS.
+GRAPH_JSON_PATH='' python api.py
+```
+
+The article response retains `authors`, `institutions`, and `reasons` as connected
+nodes. Compact responses additionally expose complete `listed_authors`,
+`listed_institutions`, and `listed_reasons` lists, `graph_profile: aura`,
+`connected_entities: shared_names_only`, and an identity caveat. An empty Reason
+node list does not mean the record has no reasons; inspect `listed_reasons`.
+Retraction reason rankings use the complete property lists, counting a reason
+once per retraction notice and excluding other notice types.
+
+Search within properties using `/api/search?q=...&node_type=Article`. To retrieve
+records for an exact name, including names without nodes:
+
+```bash
+curl --get http://localhost:8000/api/name-records \
+  --data-urlencode 'kind=Author' --data-urlencode 'name=Alice Smith'
+```
+
+`kind` accepts `Author`, `Institution`, or `Reason`; `limit` is 1–500 and `skip`
+is nonnegative. Matching is exact and case-sensitive, as with node identity.
+Responses describe source-name matches, not disambiguated people. Both full and
+compact graphs support this endpoint. `/ready` is the readiness probe.
+
+### Build off-server and deploy
+
+Dataset workflows produce a separate `aura-compact-graph` artifact containing the
+JSON snapshot and quota report. The VPS need only run the API and query Aura.
+
+For an import entirely from GitHub Actions, configure repository secrets
+`AURA_NEO4J_URI`, `AURA_NEO4J_USER`, and `AURA_NEO4J_PASSWORD`, then manually run
+**Deploy compact graph to Aura**. It builds main, runs regression checks, uploads
+the compact artifact, and imports it with bounded transactions. Concurrent runs
+are serialized. This deployment workflow is manual; ordinary builds do not write
+to an Aura account. Schedule a maintenance window for each refresh.

@@ -12,21 +12,21 @@ python knowledge_graph.py
 
 GitHub Actions also generates the graph after data updates. Because the full JSON, GraphML, and RDF outputs exceed GitHub's normal file size limit, CI uploads them as workflow artifacts instead of committing them to the repository.
 
+For AuraDB Free, build a compact graph with every article and shared-name entities:
+
+```bash
+python knowledge_graph.py --profile aura
+```
+
+This preserves complete source lists on articles and writes a separate artifact
+and quota report under `outputs/aura/`.
+
 See [KNOWLEDGE_GRAPH.md](KNOWLEDGE_GRAPH.md) for details on:
 - Graph generation and visualization
 - Downloading CI-generated graph artifacts
 - Neo4j database integration
 - REST API for querying
 - Automated CI/CD updates
-
-## Version 2 migration
-
-The API now exposes fixed read queries; `/api/cypher` has been removed. Rebuild
-exports for graph schema version 2. Article-to-institution `Has_Institution`
-relationships replace inferred author affiliations. Retraction rankings exclude
-other notice types. Neo4j imports validate the snapshot before replacing only
-loader-owned data in one transaction. See [migration and setup](KNOWLEDGE_GRAPH.md)
-and [security boundaries](SECURITY.md).
 
 ## About the Dataset
 

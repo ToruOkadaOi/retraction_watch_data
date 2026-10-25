@@ -58,3 +58,6 @@ htmlcov/
 
 # Note: outputs/ directory is intentionally tracked
 # to store generated knowledge graph files
+
+# Full-data Aura artifacts are distributed through CI, not Git.
+outputs/aura/

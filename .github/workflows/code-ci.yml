@@ -36,3 +36,8 @@ jobs:
         env:
           TEST_NEO4J_URI: bolt://localhost:7687
           TEST_NEO4J_PASSWORD: regression-only-password
+      - name: Validate full-dataset compact artifact
+        if: matrix.python-version == '3.11'
+        run: |
+          python knowledge_graph.py --profile aura
+          python -c "import json; from graph_schema import validate_snapshot; validate_snapshot(json.load(open('outputs/aura/knowledge_graph.json')))"

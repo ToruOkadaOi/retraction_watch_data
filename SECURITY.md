@@ -4,17 +4,20 @@ The REST API exposes fixed read queries only. `/api/cypher` has been removed.
 Node type parameters are restricted to Article, Author, Journal, Institution,
 and Reason before any database access. Values are passed as query parameters.
 API queries run with read routing and only select loader-owned `RWGraph` nodes.
-Read routing is not an authorization boundary: deploy the API with a separate
-Neo4j account granted read access only. Use loader credentials only for imports.
+Read routing is not an authorization boundary. Where the Neo4j tier supports
+read-only accounts, deploy the API with a separate account granted read access
+only and use loader credentials only for imports. AuraDB Free does not include
+role-based access control; keep its credentials server-side and expose only the
+fixed API queries.
 
 ## Imports
 
 `NEO4J_PASSWORD` is required; there is no fallback password. The loader validates
-the complete schema version 2 JSON snapshot before database writes. It rejects
+the complete versioned JSON snapshot before database writes. It rejects
 unknown labels and relationship types, duplicate IDs/edges, missing endpoints,
 invalid relationship directions, and reported generation errors.
 
-Replacement is one transaction, including deletion and all insertion batches.
+Full-profile replacement is one transaction, including deletion and all insertion batches.
 Failures roll back to the previous graph and return a nonzero CLI exit status.
 Only nodes marked `RWGraph` are replaced; unmarked data is preserved. Relationships
 touching replaced nodes are removed with those nodes. Reserve this label for this
@@ -54,3 +57,24 @@ Unicode/BOM parsing, invalid data, notice-specific rankings, statistics, and syn
 change detection. The optional disposable Neo4j integration test verifies real
 query execution, repeat imports, rollback, and preservation of unowned nodes.
 Run `python -m pytest -q`; see [KNOWLEDGE_GRAPH.md](KNOWLEDGE_GRAPH.md) for setup.
+
+## Compact Aura import boundary
+
+Schema version 3 validates complete source lists and recomputes expected shared
+entities and relationships. Default quota budgets leave count headroom, include
+the maintenance marker, and account for unowned database objects. Serialized
+artifact size does not certify actual Aura storage usage.
+
+The Aura profile uses bounded commits rather than an atomic replacement because
+its free tier cannot accommodate two complete graph copies. It explicitly enters
+maintenance: API data endpoints/readiness return 503 while loading or failed.
+Generation checks reject queries crossing refreshes. Failures require rerunning
+the import; after a process crash, the five-minute lease must expire first.
+Unowned nodes survive, although relationships touching managed nodes are removed.
+The `RWImportState` label and `RWGraph` label are reserved for the loader.
+
+Direct database clients must respect the maintenance marker. A cooperating-importer
+lease prevents concurrent imports; it cannot prevent an administrator or another
+application from writing directly. Reserve a dedicated Aura instance. GitHub
+imports are manual and use separate `AURA_NEO4J_*` secrets. No account credentials
+are required to build or test compact snapshots.

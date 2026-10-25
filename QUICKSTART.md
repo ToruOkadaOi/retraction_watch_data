@@ -45,3 +45,16 @@ python -m pytest -q
 Tests leave tracked sample outputs unchanged. See
 [KNOWLEDGE_GRAPH.md](KNOWLEDGE_GRAPH.md) for schema migration, database integration
 tests, API contracts, and CI behavior, and [SECURITY.md](SECURITY.md) for deployment.
+
+For a compact AuraDB Free graph that keeps every article:
+
+```bash
+python knowledge_graph.py --profile aura
+python neo4j_integration.py --json outputs/aura/knowledge_graph.json --mode aura
+```
+
+Configure `NEO4J_URI` with your Aura `neo4j+s://` URI and its credentials before
+importing. Read `outputs/aura/aura_report.json` for count budgets and artifact size.
+The compact importer uses maintenance mode and small transactions; failed imports
+must be rerun. See the compact profile section in the full documentation for
+source preservation, name identity, readiness, and the manual deployment workflow.

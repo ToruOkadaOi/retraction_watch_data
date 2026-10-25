@@ -76,6 +76,21 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+      - name: Generate compact Aura graph
+        if: steps.sync.outputs.data_changed == 'true'
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- retraction_watch.csv) python knowledge_graph.py --profile aura
+          cat outputs/aura/aura_report.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload compact Aura graph
+        if: steps.sync.outputs.data_changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-compact-graph
+          path: outputs/aura/*.json
+          retention-days: 30
+          if-no-files-found: error
+
       - name: Push to GitHub
         if: steps.sync.outputs.data_changed == 'true'
         run: |

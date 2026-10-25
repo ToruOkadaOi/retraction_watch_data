@@ -10,7 +10,8 @@ from typing import Literal, Optional
 from fastapi import FastAPI, HTTPException, Query
 from neo4j import READ_ACCESS, GraphDatabase
 
-from graph_schema import EDGE_TYPES, NODE_TYPES, validate_snapshot
+from aura_import import STATE_ID
+from graph_schema import EDGE_TYPES, IDENTITY_NOTE, NODE_TYPES, validate_snapshot
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -31,11 +32,13 @@ if password:
 
 json_data = None
 try:
-    with open("outputs/knowledge_graph.json", encoding="utf-8") as source:
-        json_data = validate_snapshot(json.load(source))
+    snapshot_path = os.getenv("GRAPH_JSON_PATH", "outputs/knowledge_graph.json")
+    if snapshot_path:
+        with open(snapshot_path, encoding="utf-8") as source:
+            json_data = validate_snapshot(json.load(source))
 except (OSError, ValueError, TypeError, AttributeError):
     logger.warning(
-        "No valid schema version 2 JSON snapshot; generate one before serving JSON queries"
+        "No valid JSON snapshot; generate one or configure GRAPH_JSON_PATH before serving JSON queries"
     )
 
 
@@ -51,12 +54,30 @@ app = FastAPI(
 )
 
 
+def database_state(session):
+    states = session.run(
+        """MATCH (s:RWImportState {id: $state_id})
+        RETURN s.status AS status, s.generation AS generation""",
+        state_id=STATE_ID,
+    ).data()
+    state = states[0] if states else None
+    if state and state["status"] != "ready":
+        raise HTTPException(
+            503, "Graph refresh incomplete; retry after a successful import"
+        )
+    return state
+
+
 def query_neo4j(cypher, parameters=None):
     if not neo4j_driver:
         raise HTTPException(503, "Neo4j database not available")
-    # Read routing is defense in depth; use a database user with read-only grants.
     with neo4j_driver.session(default_access_mode=READ_ACCESS) as session:
-        return session.run(cypher, parameters or {}).data()
+        before = database_state(session)
+        records = session.run(cypher, parameters or {}).data()
+        # Detect refreshes that started or finished while a query was running.
+        if before != database_state(session):
+            raise HTTPException(503, "Graph changed during query; retry")
+        return records
 
 
 def with_fallback(cypher, parameters=None):
@@ -64,6 +85,8 @@ def with_fallback(cypher, parameters=None):
     if neo4j_driver:
         try:
             return query_neo4j(cypher, parameters)
+        except HTTPException:
+            raise
         except Exception:
             logger.exception("Neo4j query failed")
     if json_data is None:
@@ -84,11 +107,15 @@ def root():
         "name": app.title,
         "version": app.version,
         "neo4j_connected": neo4j_driver is not None,
+        "identity_note": IDENTITY_NOTE,
+        "compact_profile_note": "Article lists retain all names; Author/Institution nodes may represent shared names only.",
         "endpoints": {
             "docs": "/docs",
             "statistics": "/api/statistics",
             "nodes": "/api/nodes/{node_type}",
             "search": "/api/search",
+            "name_records": "/api/name-records",
+            "readiness": "/ready",
         },
     }
 
@@ -97,18 +124,13 @@ def root():
 def get_statistics():
     if neo4j_driver:
         try:
-            nodes = {
-                r["type"]: r["count"]
-                for r in query_neo4j(
-                    "MATCH (n:RWGraph) RETURN n.type AS type, count(n) AS count"
-                )
-            }
-            edges = {
-                r["type"]: r["count"]
-                for r in query_neo4j(
-                    "MATCH (:RWGraph)-[r]->(:RWGraph) RETURN type(r) AS type, count(r) AS count"
-                )
-            }
+            records = query_neo4j("""MATCH (n:RWGraph)
+                RETURN 'node' AS category, n.type AS type, count(n) AS count
+                UNION ALL
+                MATCH (:RWGraph)-[r]->(:RWGraph)
+                RETURN 'edge' AS category, type(r) AS type, count(r) AS count""")
+            nodes = {r["type"]: r["count"] for r in records if r["category"] == "node"}
+            edges = {r["type"]: r["count"] for r in records if r["category"] == "edge"}
             return {
                 "source": "neo4j",
                 "nodes": nodes,
@@ -116,6 +138,8 @@ def get_statistics():
                 "total_nodes": sum(nodes.values()),
                 "total_edges": sum(edges.values()),
             }
+        except HTTPException:
+            raise
         except Exception:
             logger.exception("Neo4j statistics failed")
     if json_data is None:
@@ -161,7 +185,10 @@ def search_nodes(
     label = f":{node_type}" if node_type else ""
     records = with_fallback(
         f"""MATCH (n:RWGraph{label})
-        WHERE any(key IN keys(n) WHERE toLower(toString(n[key])) CONTAINS toLower($query))
+        WHERE any(key IN keys(n) WHERE CASE
+            WHEN key IN ['author_names', 'institution_names', 'reason_names']
+            THEN any(value IN n[key] WHERE toLower(value) CONTAINS toLower($query))
+            ELSE toLower(toString(n[key])) CONTAINS toLower($query) END)
         RETURN n ORDER BY n.id LIMIT $limit""",
         {"query": q, "limit": limit},
     )
@@ -174,9 +201,10 @@ def search_nodes(
             for n in matches
             if (node_type is None or n["properties"]["type"] == node_type)
             and any(
-                q.lower() in value.lower()
+                q.lower() in item.lower()
                 for value in n["properties"].values()
-                if isinstance(value, str)
+                for item in (value if isinstance(value, list) else [value])
+                if isinstance(item, str)
             )
         ][:limit]
     return {"query": q, "nodes": nodes, "count": len(nodes)}
@@ -205,6 +233,12 @@ def get_article(record_id: str):
             return {k: v for k, v in node.items() if k != "id"}
 
         return {
+            **article_lists(
+                properties(row["a"]),
+                row["authors"],
+                row["institutions"],
+                row["reasons"],
+            ),
             "article": properties(row["a"]),
             "authors": [properties(n) for n in row["authors"]],
             "journal": properties(row["j"]) if row["j"] else None,
@@ -228,11 +262,99 @@ def get_article(record_id: str):
             elif kind == "Has_Institution":
                 institutions.append(index[edge["target"]])
     return {
+        **article_lists(index[identity], authors, institutions, reasons),
         "article": index[identity],
         "authors": authors,
         "journal": journals[0] if journals else None,
         "reasons": reasons,
         "institutions": institutions,
+    }
+
+
+def article_lists(article, authors, institutions, reasons):
+    compact = article.get("graph_profile") == "aura"
+    return {
+        "listed_authors": article.get(
+            "author_names", [node["name"] for node in authors]
+        ),
+        "listed_institutions": article.get(
+            "institution_names", [node["name"] for node in institutions]
+        ),
+        "listed_reasons": article.get(
+            "reason_names", [node["name"] for node in reasons]
+        ),
+        "graph_profile": "aura" if compact else "full",
+        "connected_entities": "shared_names_only" if compact else "all_listed_names",
+        "identity_note": IDENTITY_NOTE,
+    }
+
+
+@app.get("/ready")
+def ready():
+    if neo4j_driver:
+        records = query_neo4j("MATCH (n:RWGraph:Article) RETURN count(n) AS count")
+        if not records or not records[0]["count"]:
+            raise HTTPException(503, "No imported article records")
+        return {"ready": True, "source": "neo4j"}
+    if json_data and any(
+        n["properties"]["type"] == "Article" for n in json_data["nodes"]
+    ):
+        return {
+            "ready": True,
+            "source": "json",
+            "profile": json_data["metadata"].get("profile", "full"),
+        }
+    raise HTTPException(503, "No data source available")
+
+
+@app.get("/api/name-records")
+def name_records(
+    name: str = Query(..., min_length=1, max_length=500),
+    kind: Literal["Author", "Institution", "Reason"] = "Author",
+    limit: int = Query(50, ge=1, le=500),
+    skip: int = Query(0, ge=0),
+):
+    field, relation = {
+        "Author": ("author_names", "Authored_By"),
+        "Institution": ("institution_names", "Has_Institution"),
+        "Reason": ("reason_names", "Retracted_For"),
+    }[kind]
+    pattern = (
+        f"(n:RWGraph:{kind} {{name: $name}})-[:{relation}]->(a)"
+        if kind == "Author"
+        else f"(a)-[:{relation}]->(n:RWGraph:{kind} {{name: $name}})"
+    )
+    records = with_fallback(
+        f"""MATCH (a:RWGraph:Article)
+        WHERE $name IN coalesce(a.{field}, []) OR EXISTS {{ MATCH {pattern} }}
+        RETURN a ORDER BY a.id SKIP $skip LIMIT $limit""",
+        {"name": name, "skip": skip, "limit": limit},
+    )
+    if records is not None:
+        nodes = [node_response(r["a"]) for r in records]
+    else:
+        linked = set()
+        for edge in json_data["edges"]:
+            if edge["properties"]["type"] == relation:
+                if kind == "Author" and edge["source"] == f"Author:{name}":
+                    linked.add(edge["target"])
+                elif kind != "Author" and edge["target"] == f"{kind}:{name}":
+                    linked.add(edge["source"])
+        nodes = [
+            dict(node, type="Article")
+            for node in sorted(json_data["nodes"], key=lambda n: n["id"])
+            if node["properties"]["type"] == "Article"
+            and (name in node["properties"].get(field, []) or node["id"] in linked)
+        ][skip : skip + limit]
+    return {
+        "name": name,
+        "kind": kind,
+        "nodes": nodes,
+        "count": len(nodes),
+        "skip": skip,
+        "limit": limit,
+        "match_basis": "exact_source_name",
+        "identity_note": IDENTITY_NOTE,
     }
 
 
@@ -242,26 +364,43 @@ def ranking(kind, limit):
         if kind == "journals"
         else ("Retracted_For", "Reason", "reason", "count")
     )
-    records = with_fallback(
-        f"""
-        MATCH (a:RWGraph:Article)-[:{relationship}]->(n:RWGraph:{label})
-        WHERE a.retraction_nature = 'Retraction'
-        RETURN n.name AS {field}, count(DISTINCT a) AS {count_field}
-        ORDER BY {count_field} DESC, {field} LIMIT $limit""",
-        {"limit": limit},
-    )
+    if kind == "reasons":
+        cypher = """MATCH (a:RWGraph:Article)
+            WHERE a.retraction_nature = 'Retraction'
+            OPTIONAL MATCH (a)-[:Retracted_For]->(r:RWGraph:Reason)
+            WITH a, collect(DISTINCT r.name) AS connected_reasons
+            WITH a, CASE WHEN a.graph_profile = 'aura' THEN a.reason_names
+                         ELSE connected_reasons END AS reasons
+            UNWIND reasons AS reason
+            RETURN reason, count(DISTINCT a) AS count
+            ORDER BY count DESC, reason LIMIT $limit"""
+    else:
+        cypher = f"""MATCH (a:RWGraph:Article)-[:{relationship}]->(n:RWGraph:{label})
+            WHERE a.retraction_nature = 'Retraction'
+            RETURN n.name AS {field}, count(DISTINCT a) AS {count_field}
+            ORDER BY {count_field} DESC, {field} LIMIT $limit"""
+    records = with_fallback(cypher, {"limit": limit})
     if records is None:
         index = {n["id"]: n["properties"] for n in json_data["nodes"]}
-        counts = Counter(
-            e["target"]
-            for e in json_data["edges"]
-            if e["properties"]["type"] == relationship
-            and index[e["source"]].get("retraction_nature") == "Retraction"
-        )
+        counts = Counter()
+        for edge in json_data["edges"]:
+            if (
+                edge["properties"]["type"] == relationship
+                and index[edge["source"]].get("retraction_nature") == "Retraction"
+            ):
+                counts[index[edge["target"]]["name"]] += 1
+        if kind == "reasons":
+            for props in index.values():
+                if (
+                    props.get("type") == "Article"
+                    and props.get("graph_profile") == "aura"
+                    and props["retraction_nature"] == "Retraction"
+                ):
+                    counts.update(set(props["reason_names"]))
         records = [
-            {field: index[key]["name"], count_field: count}
-            for key, count in sorted(
-                counts.items(), key=lambda item: (-item[1], index[item[0]]["name"])
+            {field: name, count_field: count}
+            for name, count in sorted(
+                counts.items(), key=lambda item: (-item[1], item[0])
             )[:limit]
         ]
     return {kind: records, "count": len(records)}

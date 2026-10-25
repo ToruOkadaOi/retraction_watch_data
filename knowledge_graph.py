@@ -12,10 +12,13 @@ Schema (relationship directions):
     (Article)-[:Retracted_For]->(Reason)
 """
 
+import argparse
 import csv
+import hashlib
 import json
 import logging
 import os
+import sys
 import tempfile
 from collections import Counter
 from copy import deepcopy
@@ -28,7 +31,16 @@ import matplotlib
 import networkx as nx
 from rdflib import RDF, Graph, Literal, Namespace, URIRef
 
-from graph_schema import NOTICE_TYPES, REQUIRED_COLUMNS, SCHEMA_VERSION
+from graph_schema import (
+    AURA_NODE_BUDGET,
+    AURA_RELATIONSHIP_BUDGET,
+    AURA_SCHEMA_VERSION,
+    IDENTITY_NOTE,
+    NOTICE_TYPES,
+    REQUIRED_COLUMNS,
+    SCHEMA_VERSION,
+    check_aura_quota,
+)
 
 matplotlib.use("Agg")  # Use non-interactive backend
 import matplotlib.pyplot as plt
@@ -43,7 +55,28 @@ logger = logging.getLogger(__name__)
 class KnowledgeGraphGenerator:
     """Generate Knowledge Graph from Retraction Watch data"""
 
-    def __init__(self, csv_path: str = "retraction_watch.csv"):
+    def __init__(
+        self,
+        csv_path: str = "retraction_watch.csv",
+        *,
+        profile="full",
+        min_shared_records=2,
+        max_nodes=AURA_NODE_BUDGET,
+        max_relationships=AURA_RELATIONSHIP_BUDGET,
+    ):
+        if (
+            profile not in ("full", "aura")
+            or type(min_shared_records) is not int
+            or min_shared_records < 2
+        ):
+            raise ValueError(
+                "Use full/aura profile and a shared-record threshold of at least 2"
+            )
+        self.profile = profile
+        self.min_shared_records = min_shared_records
+        self.max_nodes, self.max_relationships = max_nodes, max_relationships
+        self._frequencies = {"Author": Counter(), "Institution": Counter()}
+        self.source_sha256 = None
         self.csv_path = csv_path
         self._parse_failed = False
         self.graph = nx.DiGraph()
@@ -94,10 +127,26 @@ class KnowledgeGraphGenerator:
 
     def parse_csv(self) -> None:
         """Build a validated snapshot; never expose partially parsed rows."""
-        candidate = type(self)(self.csv_path)
+        candidate = type(self)(
+            self.csv_path,
+            profile=self.profile,
+            min_shared_records=self.min_shared_records,
+            max_nodes=self.max_nodes,
+            max_relationships=self.max_relationships,
+        )
         seen_ids = set()
         row_num = 1
         try:
+            with open(self.csv_path, "rb") as source:
+                source_hash = hashlib.file_digest(source, "sha256").hexdigest()
+            if self.profile == "aura":
+                # Count each name once per record; repeated mentions are not shared entities.
+                with open(self.csv_path, encoding="utf-8-sig", newline="") as source:
+                    for row in csv.DictReader(source, strict=True):
+                        for field in candidate._frequencies:
+                            candidate._frequencies[field].update(
+                                set(self._split_field(row.get(field, "")))
+                            )
             with open(self.csv_path, "r", encoding="utf-8-sig", newline="") as f:
                 reader = csv.DictReader(f, strict=True)
                 headers = reader.fieldnames or []
@@ -128,12 +177,19 @@ class KnowledgeGraphGenerator:
                     candidate._process_row(row, row_num)
             if not seen_ids:
                 raise ValueError("CSV contains no records")
+            with open(self.csv_path, "rb") as source:
+                if hashlib.file_digest(source, "sha256").hexdigest() != source_hash:
+                    raise ValueError("Source CSV changed during generation")
+            candidate.source_sha256 = source_hash
+            if self.profile == "aura":
+                candidate.quota_report()
         except Exception as exc:
             self._parse_failed = True
             message = f"CSV validation failed near row {row_num}: {exc}"
             self.stats["errors"] = [message]
             raise ValueError(message) from exc
         self.graph, self.stats = candidate.graph, candidate.get_statistics()
+        self.source_sha256 = candidate.source_sha256
         self._parse_failed = False
         self._log_statistics()
 
@@ -167,6 +223,19 @@ class KnowledgeGraphGenerator:
             "notes": row.get("Notes", ""),
             "urls": row.get("URLS", ""),
         }
+        if self.profile == "aura":
+            article_props.update(
+                {
+                    "graph_profile": "aura",
+                    "author_names": self._split_field(row["Author"]),
+                    "institution_names": self._split_field(row["Institution"]),
+                    "reason_names": self._split_field(row["Reason"]),
+                    # Retain every source column, including fields not otherwise modeled.
+                    "source_record": json.dumps(
+                        row, ensure_ascii=False, separators=(",", ":")
+                    ),
+                }
+            )
         self._add_node(article_id, "Article", article_props)
 
         # Process Journal
@@ -185,18 +254,35 @@ class KnowledgeGraphGenerator:
         # Process Authors
         authors = self._split_field(row.get("Author", ""))
         for author in authors:
-            if author:
+            if author and (
+                self.profile == "full"
+                or self._frequencies["Author"][author] >= self.min_shared_records
+            ):
                 author_id = self._create_node_id("Author", author)
                 author_props = {"name": author}
+                if self.profile == "aura":
+                    author_props.update(
+                        identity_basis="exact_name_string",
+                        record_count=str(self._frequencies["Author"][author]),
+                    )
                 self._add_node(author_id, "Author", author_props)
                 self._add_edge(author_id, article_id, "Authored_By", {})
 
         # Process Institutions
         institutions = self._split_field(row.get("Institution", ""))
         for institution in institutions:
-            if institution:
+            if institution and (
+                self.profile == "full"
+                or self._frequencies["Institution"][institution]
+                >= self.min_shared_records
+            ):
                 institution_id = self._create_node_id("Institution", institution)
                 institution_props = {"name": institution}
+                if self.profile == "aura":
+                    institution_props.update(
+                        identity_basis="exact_institution_string",
+                        record_count=str(self._frequencies["Institution"][institution]),
+                    )
                 self._add_node(institution_id, "Institution", institution_props)
                 # The CSV lists affiliations per article, without author mappings.
                 self._add_edge(article_id, institution_id, "Has_Institution", {})
@@ -204,7 +290,7 @@ class KnowledgeGraphGenerator:
         # Process Retraction Reasons
         reasons = self._split_field(row.get("Reason", ""))
         for reason in reasons:
-            if reason:
+            if reason and self.profile == "full":
                 reason_id = self._create_node_id("Reason", reason)
                 reason_props = {"name": reason}
                 self._add_node(reason_id, "Reason", reason_props)
@@ -299,54 +385,78 @@ class KnowledgeGraphGenerator:
 
         logger.info(f"Visualization saved to {output_path}")
 
-    def export_to_json(self, output_path: str = "knowledge_graph.json") -> None:
-        """Export graph to JSON format"""
-        self._ensure_exportable()
-        logger.info(f"Exporting to JSON: {output_path}")
-        source_date_epoch = os.getenv("SOURCE_DATE_EPOCH")
-        generated_at = (
-            datetime.fromtimestamp(int(source_date_epoch), timezone.utc).isoformat()
-            if source_date_epoch
-            else datetime.now().isoformat()
+    def quota_report(self):
+        return check_aura_quota(
+            {"nodes": self.graph.nodes, "edges": self.graph.edges},
+            self.max_nodes,
+            self.max_relationships,
         )
 
-        # Convert graph to JSON-serializable format
-        data = {
-            "metadata": {
-                "generated_at": generated_at,
-                "schema_version": SCHEMA_VERSION,
-                "statistics": self.get_statistics(),
-            },
-            "nodes": [],
-            "edges": [],
+    def metadata(self):
+        epoch = os.getenv("SOURCE_DATE_EPOCH")
+        result = {
+            "generated_at": datetime.fromtimestamp(int(epoch), timezone.utc).isoformat()
+            if epoch
+            else datetime.now(timezone.utc).isoformat(),
+            "schema_version": AURA_SCHEMA_VERSION
+            if self.profile == "aura"
+            else SCHEMA_VERSION,
+            "profile": self.profile,
+            "source_csv_sha256": self.source_sha256,
+            "statistics": self.get_statistics(),
+            "identity_note": IDENTITY_NOTE,
         }
+        if self.profile == "aura":
+            result.update(
+                min_shared_records=self.min_shared_records,
+                aura_quota=self.quota_report(),
+            )
+        return result
 
-        # Add nodes
-        for node_id in self.graph.nodes():
-            node_data = {"id": node_id, "properties": dict(self.graph.nodes[node_id])}
-            data["nodes"].append(node_data)
-
-        # Add edges
-        for source, target in self.graph.edges():
-            edge_data = {
-                "source": source,
-                "target": target,
-                "properties": dict(self.graph[source][target]),
-            }
-            data["edges"].append(edge_data)
-
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
-        logger.info(
-            f"JSON export completed: {len(data['nodes'])} nodes, {len(data['edges'])} edges"
-        )
+    def export_to_json(self, output_path: str = "knowledge_graph.json") -> None:
+        """Stream the snapshot without constructing another full graph in memory."""
+        self._ensure_exportable()
+        with open(output_path, "w", encoding="utf-8") as output:
+            output.write(
+                '{"metadata":' + json.dumps(self.metadata(), ensure_ascii=False)
+            )
+            output.write(',"nodes":[\n')
+            for index, (identity, props) in enumerate(self.graph.nodes(data=True)):
+                if index:
+                    output.write(",\n")
+                output.write(
+                    json.dumps(
+                        {"id": identity, "properties": props}, ensure_ascii=False
+                    )
+                )
+            output.write('],"edges":[\n')
+            for index, (source, target, props) in enumerate(
+                self.graph.edges(data=True)
+            ):
+                if index:
+                    output.write(",\n")
+                output.write(
+                    json.dumps(
+                        {"source": source, "target": target, "properties": props},
+                        ensure_ascii=False,
+                    )
+                )
+            output.write("]}\n")
+        logger.info("JSON export completed: %s", output_path)
 
     def export_to_graphml(self, output_path: str = "knowledge_graph.graphml") -> None:
         """Export graph to GraphML format (for Gephi)"""
         self._ensure_exportable()
         logger.info(f"Exporting to GraphML: {output_path}")
-        nx.write_graphml(self.graph, output_path)
+        # GraphML has scalar attributes; encode list properties as JSON strings.
+        graph = self.graph
+        if self.profile == "aura":
+            graph = self.graph.copy()
+            for _, props in graph.nodes(data=True):
+                for key, value in list(props.items()):
+                    if isinstance(value, list):
+                        props[key] = json.dumps(value, ensure_ascii=False)
+        nx.write_graphml(graph, output_path)
         logger.info("GraphML export completed")
 
     def export_to_rdf(self, output_path: str = "knowledge_graph.rdf") -> None:
@@ -375,7 +485,8 @@ class KnowledgeGraphGenerator:
             # Add properties
             for key, value in node_data.items():
                 if key != "type" and value:
-                    rdf_graph.add((node_uri, RW[key], Literal(value)))
+                    for item in value if isinstance(value, list) else [value]:
+                        rdf_graph.add((node_uri, RW[key], Literal(item)))
 
         # Add edges
         for source, target in self.graph.edges():
@@ -416,40 +527,62 @@ class KnowledgeGraphGenerator:
         return deepcopy(self.stats)
 
 
-def main():
-    """Main execution function"""
-    logger.info("Starting Knowledge Graph Generation")
-    os.makedirs("outputs", exist_ok=True)
-
-    # Create generator
-    generator = KnowledgeGraphGenerator("retraction_watch.csv")
-
-    # Parse CSV and build graph
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Generate full or compact Aura graphs")
+    parser.add_argument("--csv", default="retraction_watch.csv")
+    parser.add_argument("--profile", choices=["full", "aura"], default="full")
+    parser.add_argument("--min-shared-records", type=int, default=2)
+    parser.add_argument("--max-nodes", type=int, default=AURA_NODE_BUDGET)
+    parser.add_argument(
+        "--max-relationships", type=int, default=AURA_RELATIONSHIP_BUDGET
+    )
+    parser.add_argument("--output-dir")
+    parser.add_argument(
+        "--formats", nargs="+", choices=["json", "graphml", "rdf", "png"]
+    )
+    args = parser.parse_args(argv or [])
+    formats = args.formats or (
+        ["json"] if args.profile == "aura" else ["json", "graphml", "rdf", "png"]
+    )
+    destination = Path(
+        args.output_dir or ("outputs/aura" if args.profile == "aura" else "outputs")
+    )
+    generator = KnowledgeGraphGenerator(
+        args.csv,
+        profile=args.profile,
+        min_shared_records=args.min_shared_records,
+        max_nodes=args.max_nodes,
+        max_relationships=args.max_relationships,
+    )
     generator.parse_csv()
-
-    # Publish only after every export succeeds. CSV failures never reach here.
-    with tempfile.TemporaryDirectory(dir="outputs", prefix=".build-") as staging:
-        target = Path(staging)
-        generator.visualize(target / "knowledge_graph.png")
-        generator.export_to_json(target / "knowledge_graph.json")
-        generator.export_to_graphml(target / "knowledge_graph.graphml")
-        generator.export_to_rdf(target / "knowledge_graph.rdf")
-        for path in target.iterdir():
-            os.replace(path, Path("outputs") / path.name)
-
-    # Print statistics
-    stats = generator.get_statistics()
-    logger.info("\nFinal Statistics:")
-    logger.info(
-        f"Total Nodes: {sum([stats['articles'], stats['authors'], stats['journals'], stats['institutions'], stats['reasons']])}"
-    )
-    logger.info(
-        f"Total Edges: {sum([stats['authored_by'], stats['published_in'], stats['has_institution'], stats['retracted_for']])}"
-    )
-    logger.info(f"Errors encountered: {len(stats['errors'])}")
-
-    logger.info("\nKnowledge Graph generation completed successfully!")
+    destination.mkdir(parents=True, exist_ok=True)
+    exporters = {
+        "json": generator.export_to_json,
+        "graphml": generator.export_to_graphml,
+        "rdf": generator.export_to_rdf,
+        "png": generator.visualize,
+    }
+    with tempfile.TemporaryDirectory(dir=destination, prefix=".build-") as staging:
+        for suffix in formats:
+            exporters[suffix](Path(staging) / f"knowledge_graph.{suffix}")
+        if args.profile == "aura":
+            report = generator.quota_report()
+            report["source_csv_sha256"] = generator.source_sha256
+            json_path = Path(staging) / "knowledge_graph.json"
+            if json_path.exists():
+                report["json_bytes"] = json_path.stat().st_size
+                if report["json_bytes"] > report["storage_limit_bytes"]:
+                    raise ValueError(
+                        "Serialized graph alone exceeds Aura Free storage limit"
+                    )
+            (Path(staging) / "aura_report.json").write_text(
+                json.dumps(report, indent=2) + "\n"
+            )
+            logger.info("Aura quota report: %s", report)
+        for path in Path(staging).iterdir():
+            os.replace(path, destination / path.name)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main(sys.argv[1:]))

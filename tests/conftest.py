@@ -58,3 +58,34 @@ def snapshot(write_csv, tmp_path):
     result = tmp_path / "graph.json"
     generator.export_to_json(result)
     return result
+
+
+@pytest.fixture
+def aura_snapshot(write_csv, tmp_path):
+    rows = [
+        {
+            "Author": "Shared Name;Singleton;Shared Name",
+            "Institution": "Shared Uni;Solo Uni",
+            "Reason": "Reason A;Reason A;Reason B",
+            "RetractionPubMedID": "123",
+        },
+        {
+            "Author": "Shared Name;Other",
+            "Institution": "Shared Uni",
+            "Reason": "Reason A",
+            "RetractionNature": "Correction",
+        },
+        {"Author": "Shared Name", "Institution": "Another Uni", "Reason": "Reason A"},
+    ]
+    path = write_csv(
+        rows,
+        headers=sorted(
+            REQUIRED_COLUMNS
+            | {"RetractionPubMedID", "OriginalPaperPubMedID", "Extra field"}
+        ),
+    )
+    generator = KnowledgeGraphGenerator(path, profile="aura")
+    generator.parse_csv()
+    output = tmp_path / "aura.json"
+    generator.export_to_json(output)
+    return output

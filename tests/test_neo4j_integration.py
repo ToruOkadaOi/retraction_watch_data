@@ -21,10 +21,12 @@ def database():
     loader = Neo4jLoader(uri=uri, user="neo4j", password=password)
     with loader.driver.session() as session:
         session.run("MATCH (n:RWGraph) DETACH DELETE n").consume()
+        session.run("MATCH (s:RWImportState) DETACH DELETE s").consume()
         session.run('CREATE (:RegressionSentinel {id: "keep-me"})').consume()
     yield loader
     with loader.driver.session() as session:
         session.run("MATCH (n:RWGraph) DETACH DELETE n").consume()
+        session.run("MATCH (s:RWImportState) DETACH DELETE s").consume()
         session.run("MATCH (n:RegressionSentinel) DELETE n").consume()
     loader.close()
 
@@ -115,3 +117,136 @@ def test_atomic_scoped_replacement_and_real_api(database, snapshot, monkeypatch)
     snapshot.write_text(json.dumps(data))
     database.load_from_json(snapshot)
     assert database.get_statistics()["nodes"]["Article"] == 3
+
+
+def test_bounded_aura_import_recovery_and_real_queries(
+    database, aura_snapshot, monkeypatch
+):
+    from aura_import import STATE_ID, AuraImporter
+
+    data = json.loads(aura_snapshot.read_text())
+
+    # Every read endpoint must refuse partial data, even if a JSON fallback exists.
+    class FailingImporter(AuraImporter):
+        def _finish(self, tx, data):
+            raise ValueError("Injected failure after committed batches")
+
+    with pytest.raises(ValueError, match="Injected failure"):
+        FailingImporter(database.driver, batch_size=2).load(data, "failed-snapshot")
+    monkeypatch.setattr(api, "neo4j_driver", database.driver)
+    monkeypatch.setattr(api, "json_data", data)
+    with TestClient(api.app) as client:
+        for path in (
+            "/ready",
+            "/api/statistics",
+            "/api/nodes/Article",
+            "/api/articles/1",
+            "/api/reasons/top",
+            "/api/name-records?name=Singleton",
+        ):
+            assert client.get(path).status_code == 503
+        monkeypatch.setattr(api, "neo4j_driver", None)
+    # Retrying a failed import rebuilds safely, including clearing committed data.
+    database.load_from_json(aura_snapshot, batch_size=2)
+    expected = database.get_statistics()
+    assert expected["nodes"]["Article"] == 3
+    assert expected["nodes"]["Author"] == 1
+    assert "Reason" not in expected["nodes"]
+    assert sum(expected["relationships"].values()) == 8
+    database.load_from_json(aura_snapshot, batch_size=2)
+    assert database.get_statistics() == expected
+    monkeypatch.setattr(api, "neo4j_driver", database.driver)
+    monkeypatch.setattr(api, "json_data", None)
+    with TestClient(api.app) as client:
+        assert client.get("/ready").status_code == 200
+        detail = client.get("/api/articles/1").json()
+        assert detail["listed_authors"] == ["Shared Name", "Singleton", "Shared Name"]
+        assert detail["connected_entities"] == "shared_names_only"
+        assert (
+            client.get(
+                "/api/name-records", params={"kind": "Author", "name": "Singleton"}
+            ).json()["count"]
+            == 1
+        )
+        assert (
+            client.get(
+                "/api/name-records", params={"kind": "Institution", "name": "Solo Uni"}
+            ).json()["count"]
+            == 1
+        )
+        assert (
+            client.get(
+                "/api/name-records", params={"kind": "Reason", "name": "Reason A"}
+            ).json()["count"]
+            == 3
+        )
+        assert (
+            client.get(
+                "/api/search", params={"node_type": "Article", "q": "Singleton"}
+            ).json()["count"]
+            == 1
+        )
+        assert client.get("/api/reasons/top").json()["reasons"] == [
+            {"reason": "Reason A", "count": 2},
+            {"reason": "Reason B", "count": 1},
+        ]
+        assert client.get("/api/journals/top").json()["journals"] == [
+            {"journal": "Journal", "retraction_count": 2}
+        ]
+        assert (
+            client.get("/api/nodes/Author").json()["nodes"][0]["properties"][
+                "identity_basis"
+            ]
+            == "exact_name_string"
+        )
+        assert client.get("/api/statistics").json()["total_nodes"] == 6
+        monkeypatch.setattr(api, "neo4j_driver", None)
+    with database.driver.session() as session:
+        assert (
+            session.run(
+                "MATCH (n:RegressionSentinel) RETURN count(n) AS count"
+            ).single()["count"]
+            == 1
+        )
+        # Expired leases can be reclaimed after an abrupt process crash.
+        session.run(
+            'MATCH (s:RWImportState {id: $id}) SET s.status="loading", s.owner="crashed", s.lease_until=0',
+            id=STATE_ID,
+        ).consume()
+    database.load_from_json(aura_snapshot, batch_size=2)
+    assert database.get_statistics() == expected
+
+
+def test_aura_import_lease_and_unowned_quota(database, aura_snapshot):
+    from aura_import import STATE_ID, AuraImporter
+
+    data = json.loads(aura_snapshot.read_text())
+    importer = AuraImporter(database.driver, batch_size=2)
+    # The sentinel also consumes quota: this budget fits the artifact alone, not the database.
+    with pytest.raises(ValueError, match="unowned"):
+        AuraImporter(database.driver, max_nodes=len(data["nodes"]) + 1).load(
+            data, "hash"
+        )
+    with database.driver.session() as session:
+        session.execute_write(importer._claim, data, "first-worker")
+    with pytest.raises(ValueError, match="active lease"):
+        AuraImporter(database.driver).load(data, "second-worker")
+    with database.driver.session() as session:
+        row = session.run(
+            "MATCH (s:RWImportState {id:$id}) RETURN s.owner AS owner", id=STATE_ID
+        ).single()
+        assert row["owner"] == importer.owner
+        # A displaced worker must not continue or mark the new owner's job failed.
+        session.run(
+            'MATCH (s:RWImportState {id:$id}) SET s.owner="replacement"', id=STATE_ID
+        ).consume()
+        with pytest.raises(ValueError, match="lost"):
+            importer._run(session, "RETURN 1 AS count")
+        session.execute_write(importer._fail)
+        assert (
+            session.run(
+                "MATCH (s:RWImportState {id:$id}) RETURN s.status AS status",
+                id=STATE_ID,
+            ).single()["status"]
+            == "loading"
+        )
