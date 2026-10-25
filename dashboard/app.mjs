@@ -136,13 +136,10 @@ function initGraph() {
   if (cy || !window.cytoscape) return;
   cy = window.cytoscape({ container: $('network'), elements: [], minZoom: .12, maxZoom: 3, wheelSensitivity: .25,
     style: [
-      { selector: 'node', style: { 'background-color': element => NODE_COLORS[element.data('type')] || '#c3a1c6', width: element => element.data('type') === 'Article' ? 23 : 34, height: element => element.data('type') === 'Article' ? 23 : 34, label: element => shortText(element.data('name'), element.data('type') === 'Article' ? 38 : 26), color: '#e4eee5', 'font-family': 'DM Sans, sans-serif', 'font-size': 9, 'text-valign': 'bottom', 'text-margin-y': 8, 'text-wrap': 'wrap', 'text-max-width': 110, 'text-background-color': '#142b30', 'text-background-opacity': .85, 'text-background-padding': 2, 'border-width': 1, 'border-color': '#ffffff30' } },
-      { selector: 'node[type="Institution"]', style: { shape: 'round-rectangle' } },
-      { selector: 'node[type="Journal"]', style: { shape: 'diamond', width: 39, height: 39 } },
-      { selector: 'edge', style: { width: 1, 'line-color': '#78978b', opacity: .43, 'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#78978b', 'arrow-scale': .55 } },
-      { selector: 'node:selected', style: { 'border-width': 3, 'border-color': '#f3edcb', 'overlay-opacity': .08, 'overlay-color': '#f3edcb' } },
-      { selector: '.quiet-label', style: { label: '' } },
-      { selector: 'node:selected', style: { label: element => shortText(element.data('name'), 50) } },
+      { selector: 'node', style: { 'background-color': element => NODE_COLORS[element.data('type')] || '#bf8cc0', width: element => element.data('type') === 'Article' ? 46 : 54, height: element => element.data('type') === 'Article' ? 46 : 54, shape: 'ellipse', label: element => shortText(element.data('name'), 30), color: '#162433', 'font-family': 'Arial, sans-serif', 'font-size': 8, 'text-valign': 'center', 'text-halign': 'center', 'text-wrap': 'wrap', 'text-max-width': 40, 'border-width': 1.5, 'border-color': '#ffffff', 'overlay-color': '#006fd6', 'overlay-padding': 6 } },
+      { selector: 'edge', style: { width: 1, 'line-color': '#aab2be', opacity: .85, 'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#aab2be', 'arrow-scale': .6, label: element => element.data('type').replaceAll('_', ' '), color: '#616b7a', 'font-size': 6, 'font-family': 'Arial, sans-serif', 'text-rotation': 'autorotate', 'text-background-color': '#f4f5f7', 'text-background-opacity': 1, 'text-background-padding': 2 } },
+      { selector: '.quiet-edge', style: { label: '' } },
+      { selector: 'node:selected', style: { 'border-width': 3, 'border-color': '#006fd6', 'overlay-opacity': .12, 'font-weight': 'bold' } },
     ], layout: { name: 'preset' } });
   cy.on('tap', 'node', event => { const node = state.graph.nodes.find(n => n.id === event.target.id()); if (node) selectNode(node); });
   cy.on('mouseover', 'node', event => {
@@ -163,7 +160,7 @@ function renderGraph() {
     }
     for (const edge of state.graph.edges) if (!cy.getElementById(edgeId(edge)).length) cy.add({ group: 'edges', data: { id: edgeId(edge), ...edge } });
     cy.nodes().unselect(); if (state.selected) cy.getElementById(state.selected.id).select();
-    cy.nodes('[type="Article"]').toggleClass('quiet-label', state.graph.nodes.length > 45);
+    cy.edges().toggleClass('quiet-edge', state.graph.nodes.length > 45);
   });
   cy.layout({ name: 'cose', animate: false, fit: true, padding: 40, nodeRepulsion: () => 6500, idealEdgeLength: () => 90, numIter: state.graph.nodes.length > 70 ? 500 : 300, randomize: existing.size === 0, componentSpacing: 80 }).run();
   $('graph-placeholder').hidden = state.graph.nodes.length > 0;

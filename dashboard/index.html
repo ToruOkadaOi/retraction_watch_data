@@ -6,22 +6,25 @@
   <meta name="description" content="Explore Retraction Watch notice records and their shared-name connections. A public research graph backed by Neo4j Aura.">
   <meta name="color-scheme" content="light">
   <title>Retraction Watch · Research graph</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Source+Serif+4:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./styles.css">
   <script defer src="./vendor/cytoscape.min.js"></script>
   <script type="module" src="./app.mjs"></script>
 </head>
 <body>
 <a class="skip-link" href="#workspace">Skip to explorer</a>
+<nav class="app-rail" aria-label="Workspace navigation">
+  <a class="rail-home" href="./" aria-label="Retraction Watch home">RW</a>
+  <a class="rail-link" href="#workspace" aria-label="Graph explorer" title="Graph explorer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 2M7 7l3 11m7-9-7 9"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="9" r="3"/><circle cx="10" cy="19" r="3"/></svg></a>
+  <a class="rail-link" href="#overview" aria-label="Notice overview" title="Notice overview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V4m0 16h16M8 16v-5m5 5V6m5 10V9"/></svg></a>
+  <a class="rail-link rail-docs" href="https://retraction-watch-data.onrender.com/docs" target="_blank" rel="noopener" aria-label="API documentation" title="API documentation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-3-15-2 18"/></svg></a>
+</nav>
 <header class="site-header">
   <a class="brand" href="./" aria-label="Retraction Watch research graph home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>Retraction Watch<span class="brand-subtitle">Research graph</span></span></a>
   <nav aria-label="Main navigation"><a class="active" href="#workspace">Explorer</a><a href="#overview">Overview</a><a href="https://retraction-watch-data.onrender.com/docs" target="_blank" rel="noopener">API docs ↗</a><a href="https://github.com/ToruOkadaOi/retraction_watch_data" target="_blank" rel="noopener">Source ↗</a></nav>
 </header>
 <main>
   <section class="intro" aria-labelledby="page-title">
-    <div><div class="eyebrow">An open research resource</div><h1 id="page-title">Follow the connections.</h1><p>Explore publication notices, the names they share, and the records behind them.</p></div>
+    <div><div class="eyebrow">Public dataset / Explore</div><h1 id="page-title">Retraction Watch graph</h1><p>Explore publication notices, the names they share, and the records behind them.</p></div>
     <div class="connection"><span id="connection-badge" class="connection-badge"><i></i><span>Connecting to dataset</span></span><span id="snapshot-label" class="snapshot-label">Checking hosted snapshot…</span></div>
   </section>
   <div id="service-message" class="service-message" role="status" aria-live="polite" hidden></div>
@@ -32,7 +35,7 @@
     <div class="metric"><span>Relationships</span><strong id="metric-edges">—</strong><small>Connections in this snapshot</small></div>
   </section>
   <section class="explorer-section" id="workspace" aria-labelledby="explorer-title">
-    <div class="section-heading"><div><span class="eyebrow">Search · inspect · expand</span><h2 id="explorer-title">Graph explorer</h2></div><p>One neighborhood at a time.</p></div>
+    <div class="section-heading"><div><span class="eyebrow">Explore your data</span><h2 id="explorer-title">Graph explorer</h2></div><p>Search records. Expand connections.</p></div>
     <form id="search-form" class="search-form" role="search">
       <label class="search-field"><span class="sr-only">Search records or connected names</span><span class="search-icon" aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="Search titles, DOIs, author names, institutions…" maxlength="500" autocomplete="off"></label>
       <label class="kind-field"><span class="sr-only">Search category</span><select id="search-kind"><option value="Article">Article records</option><option value="Author">Shared author names</option><option value="Institution">Shared institution names</option><option value="Journal">Journals</option></select></label>
@@ -42,17 +45,17 @@
     <div class="workspace-grid">
       <aside class="results-panel panel" aria-labelledby="results-title"><div class="panel-heading"><h3 id="results-title">Article records</h3><span id="results-meta" class="subtle">Loading…</span></div><p id="results-context" class="panel-caption">Ordered by record ID, highest first.</p><div id="results-list" class="results-list" aria-live="polite"></div><div id="results-pagination" class="pagination"><button type="button" id="previous-results" disabled>← Previous</button><span id="results-page"></span><button type="button" id="next-results" disabled>Next →</button></div></aside>
       <section class="graph-panel" aria-label="Interactive network graph">
-        <div class="graph-heading"><div><span class="graph-eyebrow">Connected records</span><h3 id="graph-title">Select a starting point</h3></div><span id="graph-count">0 nodes · 0 connections</span></div>
-        <div class="graph-stage"><div id="network" aria-label="Graph of article records and connected names"></div><div id="graph-placeholder" class="graph-placeholder"><span class="empty-constellation" aria-hidden="true">◉ ─ ◌<br>╲ &nbsp;╱<br>◌</span><strong>Your next connection starts here.</strong><span>Choose a record or a shared name to explore its neighborhood.</span></div><div id="graph-loading" class="graph-loading" role="status" hidden>Loading connections…</div><div id="graph-tooltip" class="graph-tooltip" hidden></div><div class="graph-legend" aria-label="Node types"><span><i class="article-dot"></i>Article</span><span><i class="author-dot"></i>Author name</span><span><i class="institution-dot"></i>Institution name</span><span><i class="journal-dot"></i>Journal</span></div></div>
+        <div class="graph-heading"><div><span class="graph-eyebrow">Graph scene</span><h3 id="graph-title">Select a starting point</h3></div><span id="graph-count">0 nodes · 0 connections</span></div>
+        <div class="graph-stage"><div id="network" aria-label="Graph of article records and connected names"></div><div id="graph-placeholder" class="graph-placeholder"><span class="empty-constellation" aria-hidden="true">◉ ─ ◌<br>╲ &nbsp;╱<br>◌</span><strong>Start exploring the graph.</strong><span>Choose a record or a shared name to explore its neighborhood.</span></div><div id="graph-loading" class="graph-loading" role="status" hidden>Loading connections…</div><div id="graph-tooltip" class="graph-tooltip" hidden></div><div class="graph-legend" aria-label="Node types"><span><i class="article-dot"></i>Article</span><span><i class="author-dot"></i>Author name</span><span><i class="institution-dot"></i>Institution name</span><span><i class="journal-dot"></i>Journal</span></div></div>
         <div class="graph-toolbar"><button type="button" id="expand-node" disabled>Expand selected</button><button type="button" id="fit-graph" disabled>Fit view</button><button type="button" id="clear-graph" disabled>Clear</button><label class="sr-only" for="visible-nodes">Select a visible graph node</label><select id="visible-nodes" aria-label="Select a visible graph node"><option value="">Select a node…</option></select><button type="button" id="export-graph" disabled aria-label="Download visible graph as JSON">Export ↓</button></div>
         <p id="graph-status" class="graph-status" aria-live="polite">Select a node to inspect it. Expand to reveal connected records.</p>
       </section>
-      <aside class="detail-panel panel" aria-labelledby="detail-title"><div class="panel-heading"><h3 id="detail-title">Record details</h3><span class="detail-symbol" aria-hidden="true">↗</span></div><div id="detail-content" class="detail-content"><div class="detail-empty"><span class="detail-empty-mark" aria-hidden="true">▤</span><h4>The record behind the connection.</h4><p>Select an article to view its notice, complete source lists, dates, and DOI.</p></div></div></aside>
+      <aside class="detail-panel panel" aria-labelledby="detail-title"><div class="panel-heading"><h3 id="detail-title">Properties</h3><span class="detail-symbol" aria-hidden="true">↗</span></div><div id="detail-content" class="detail-content"><div class="detail-empty"><span class="detail-empty-mark" aria-hidden="true">▤</span><h4>Record properties</h4><p>Select an article to view its notice, complete source lists, dates, and DOI.</p></div></div></aside>
     </div>
     <p class="graph-footnote">The compact graph connects shared author and institution name strings. Singleton names and retraction reasons remain available in each article’s complete lists. Graph expansions respect the active record filters.</p>
   </section>
   <section id="overview" class="overview-section" aria-labelledby="overview-title">
-    <div class="section-heading"><div><span class="eyebrow">The broader picture</span><h2 id="overview-title">Notice overview</h2></div><p>Choose a bar to explore its records.</p></div>
+    <div class="section-heading"><div><span class="eyebrow">Dataset summary</span><h2 id="overview-title">Notice overview</h2></div><p>Choose a bar to explore its records.</p></div>
     <div class="notice-panel panel"><div class="panel-heading"><h3>Notice types</h3><span class="subtle">Counts of records</span></div><div id="notice-breakdown" class="notice-breakdown"><p class="subtle">Loading notice counts…</p></div></div>
     <div class="chart-grid"><section class="panel chart-panel" aria-labelledby="journals-title"><div class="panel-heading"><h3 id="journals-title">Journals with the most retraction notices</h3><span class="chart-unit">Records</span></div><div id="journal-chart" class="bar-chart"><p class="subtle">Loading journal counts…</p></div></section><section class="panel chart-panel" aria-labelledby="reasons-title"><div class="panel-heading"><h3 id="reasons-title">Most recorded retraction reasons</h3><span class="chart-unit">Records</span></div><div id="reason-chart" class="bar-chart"><p class="subtle">Loading reason counts…</p></div></section></div>
     <p class="graph-footnote">Rankings count retraction notices, not rates of retraction or measures of journal quality. A record may list multiple reasons, so reason counts are not additive. Historical notices do not determine a paper’s current status.</p>
