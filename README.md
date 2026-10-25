@@ -2,43 +2,92 @@
 
 This repository contains the latest dataset from Retraction Watch, generated on 2026-10-23.
 
-## Knowledge Graph
+A mirror of [Crossref's Retraction Watch dataset](https://gitlab.com/crossref/retraction-watch-data), with a knowledge graph and a public read-only API backed by Neo4j Aura.
 
-Query the hosted compact graph through the public read-only API:
+## Hosted services
 
-- [Interactive API documentation](https://retraction-watch-data.onrender.com/docs)
-- [Graph statistics](https://retraction-watch-data.onrender.com/api/statistics)
-- [Example: search article records for cancer](https://retraction-watch-data.onrender.com/api/search?q=cancer&node_type=Article&limit=5)
+### Knowledge graph API
 
-The API connects to the graph hosted in Neo4j Aura. Every article record is
-retained, with complete author, institution, and reason lists. Connected author
-and institution nodes represent shared name strings; author-name matches are not
-verified person identities. Hosted graph refreshes run separately from CSV updates.
-The first request after inactivity may be slow while the free service wakes up.
+- Interactive documentation: [API docs](https://retraction-watch-data.onrender.com/docs)
+- Base URL: [retraction-watch-data.onrender.com](https://retraction-watch-data.onrender.com)
+- Readiness check: [Service readiness](https://retraction-watch-data.onrender.com/ready)
+- Statistics: [Graph statistics](https://retraction-watch-data.onrender.com/api/statistics)
 
-This repository includes a knowledge graph pipeline for the Retraction Watch dataset. The full graph can be generated locally with:
+The free Render service may sleep while idle, so the first request can take about a minute.
+Hosted graph refreshes run separately from CSV updates; the hosted snapshot may differ from this repository's CSV.
+
+## What it does
+
+- Search article records and graph nodes.
+- Retrieve article details with complete author, institution, and reason lists.
+- Find records by an exact author, institution, or reason name, including names without separate graph nodes.
+- Inspect shared author-name and institution-name connections.
+- View graph statistics and journal/reason rankings for retraction notices.
+
+The hosted compact graph retains every article record in its imported snapshot.
+Author and institution nodes represent exact name strings shared across records;
+author-name matches are not verified person identities. Complete source lists remain
+available on each article, including names that have no separate graph node.
+
+## Try the API
+
+Search article records:
+
+```bash
+curl --get 'https://retraction-watch-data.onrender.com/api/search' \
+  --data-urlencode 'q=cancer' \
+  --data-urlencode 'node_type=Article' \
+  --data-urlencode 'limit=5'
+```
+
+Retrieve a record with its listed names and connected entities:
+
+```bash
+curl 'https://retraction-watch-data.onrender.com/api/articles/1'
+```
+
+See the [interactive documentation](https://retraction-watch-data.onrender.com/docs) for all endpoints and parameters.
+
+<details>
+<summary><strong>Getting started locally</strong></summary>
+
+Requires Python 3.11 or later. From the repository directory:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Generate the full graph and its JSON, GraphML, RDF, and sample PNG exports:
 
 ```bash
 python knowledge_graph.py
 ```
 
-GitHub Actions also generates the graph after data updates. Because the full JSON, GraphML, and RDF outputs exceed GitHub's normal file size limit, CI uploads them as workflow artifacts instead of committing them to the repository.
-
-For AuraDB Free, build a compact graph with every article and shared-name entities:
+Or generate the compact Aura profile with a separate JSON snapshot and quota report:
 
 ```bash
 python knowledge_graph.py --profile aura
 ```
 
-This preserves complete source lists on articles and writes a separate artifact
-and quota report under `outputs/aura/`.
+Full outputs are written to `outputs/`; compact outputs go to `outputs/aura/`.
+GitHub Actions also generates both profiles after dataset updates and uploads the
+outputs as workflow artifacts instead of committing the large files to Git.
 
-See [KNOWLEDGE_GRAPH.md](KNOWLEDGE_GRAPH.md) for details on:
-- Graph generation and visualization
-- Downloading CI-generated graph artifacts
-- Neo4j database integration
-- REST API for querying
-- Automated CI/CD updates
+To serve a compact snapshot locally:
+
+```bash
+GRAPH_JSON_PATH=outputs/aura/knowledge_graph.json uvicorn api:app --host 127.0.0.1 --port 8000
+```
+
+Open [http://localhost:8000/docs](http://localhost:8000/docs).
+
+</details>
+
+See [KNOWLEDGE_GRAPH.md](KNOWLEDGE_GRAPH.md) for the graph schema, exports, Neo4j/Aura
+imports, hosted deployment, and API reference; [QUICKSTART.md](QUICKSTART.md) for
+setup; and [SECURITY.md](SECURITY.md) for deployment boundaries.
 
 ## About the Dataset
 
@@ -47,6 +96,9 @@ Research can be modified after publication, including being corrected or retract
 In September 2023, Crossref acquired the Retraction Watch database from the Center of Scientific Integrity and have made it publicly available. The database contains retractions gathered from publisher websites and is updated every working day by Retraction Watch. Some other update types, such as expressions of concern and corrections, are also included in the data, but these are not as comprehensive as retractions. Various methods are used to find retractions, including searching scholarly databases, checking publisher websites, web searches, and reports from the community. For further details, see [this document](https://retractionwatch.com/wp-content/uploads/2023/12/Building-The-Database.pdf).
 
 Data in the csv file is comma-separated, with lists in a single entry separated by a semicolon (such as author names or reasons for retraction).
+
+<details>
+<summary><strong>CSV field definitions</strong></summary>
 
 The column headings in the csv file are:
 
@@ -72,3 +124,5 @@ The column headings in the csv file are:
 - _Notes_: Additional comments about the retraction.
 
 These fields are also documented [on the Retraction Watch website](https://retractionwatch.com/retraction-watch-database-user-guide/retraction-watch-database-user-guide-appendix-a-fields/).  Changes to the field names and vocabulary used [are recorded by Retraction Watch](https://retractionwatch.com/retraction-watch-database-user-guide/retraction-watch-database-user-guide-appendix-d-changes/).
+
+</details>
