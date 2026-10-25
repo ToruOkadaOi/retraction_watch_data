@@ -1,473 +1,283 @@
-"""
-FastAPI Application for Knowledge Graph Queries
+"""Read-only REST queries for the Retraction Watch knowledge graph."""
 
-Provides REST API endpoints for querying the Retraction Watch Knowledge Graph.
-"""
-
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import List, Dict, Optional, Any
 import json
 import logging
 import os
-from neo4j import GraphDatabase
+from collections import Counter
+from contextlib import asynccontextmanager
+from typing import Literal, Optional
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+from fastapi import FastAPI, HTTPException, Query
+from neo4j import READ_ACCESS, GraphDatabase
+
+from graph_schema import EDGE_TYPES, NODE_TYPES, validate_snapshot
+
 logger = logging.getLogger(__name__)
-
-# Create FastAPI app
-app = FastAPI(
-    title="Retraction Watch Knowledge Graph API",
-    description="API for querying the Retraction Watch Knowledge Graph",
-    version="1.0.0"
-)
-
-# Neo4j connection (optional, fallback to JSON)
-NEO4J_URI = os.getenv('NEO4J_URI', 'neo4j://localhost:7687')
-NEO4J_USER = os.getenv('NEO4J_USER', 'neo4j')
-NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD', '')
-
+logging.basicConfig(level=logging.INFO)
+NodeType = Literal["Article", "Author", "Journal", "Institution", "Reason"]
 neo4j_driver = None
-if NEO4J_PASSWORD:
+password = os.getenv("NEO4J_PASSWORD")
+if password:
+    candidate = GraphDatabase.driver(
+        os.getenv("NEO4J_URI", "neo4j://localhost:7687"),
+        auth=(os.getenv("NEO4J_USER", "neo4j"), password),
+    )
     try:
-        neo4j_driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-        neo4j_driver.verify_connectivity()
-        logger.info("Connected to Neo4j database")
-    except Exception as e:
-        logger.warning(f"Could not connect to Neo4j: {e}")
-        logger.info("Falling back to JSON-based queries")
+        candidate.verify_connectivity()
+        neo4j_driver = candidate
+    except Exception:
+        candidate.close()
+        logger.warning("Neo4j unavailable; using JSON fallback", exc_info=True)
 
-# Load JSON data as fallback
 json_data = None
 try:
-    with open('outputs/knowledge_graph.json', 'r', encoding='utf-8') as f:
-        json_data = json.load(f)
-    logger.info("Loaded JSON knowledge graph data")
-except FileNotFoundError:
-    logger.warning("JSON knowledge graph file not found")
+    with open("outputs/knowledge_graph.json", encoding="utf-8") as source:
+        json_data = validate_snapshot(json.load(source))
+except (OSError, ValueError, TypeError, AttributeError):
+    logger.warning(
+        "No valid schema version 2 JSON snapshot; generate one before serving JSON queries"
+    )
 
 
-# Pydantic models
-class NodeResponse(BaseModel):
-    id: str
-    type: str
-    properties: Dict[str, Any]
+@asynccontextmanager
+async def lifespan(app):
+    yield
+    if neo4j_driver:
+        neo4j_driver.close()
 
 
-class EdgeResponse(BaseModel):
-    source: str
-    target: str
-    type: str
-    properties: Dict[str, Any]
+app = FastAPI(
+    title="Retraction Watch Knowledge Graph API", version="2.0.0", lifespan=lifespan
+)
 
 
-class GraphResponse(BaseModel):
-    nodes: List[NodeResponse]
-    edges: List[EdgeResponse]
-
-
-class CypherQuery(BaseModel):
-    query: str
-    parameters: Optional[Dict[str, Any]] = {}
-
-
-class QueryResult(BaseModel):
-    records: List[Dict[str, Any]]
-    count: int
-
-
-# Helper functions
-def query_neo4j(cypher: str, parameters: Dict = None) -> List[Dict]:
-    """Execute Cypher query on Neo4j"""
+def query_neo4j(cypher, parameters=None):
     if not neo4j_driver:
-        raise HTTPException(status_code=503, detail="Neo4j database not available")
-    
-    if parameters is None:
-        parameters = {}
-    
-    with neo4j_driver.session() as session:
-        result = session.run(cypher, parameters)
-        records = [dict(record) for record in result]
-        return records
+        raise HTTPException(503, "Neo4j database not available")
+    # Read routing is defense in depth; use a database user with read-only grants.
+    with neo4j_driver.session(default_access_mode=READ_ACCESS) as session:
+        return session.run(cypher, parameters or {}).data()
 
 
-def query_json(node_type: Optional[str] = None, limit: int = 100) -> List[Dict]:
-    """Query JSON data"""
-    if not json_data:
-        raise HTTPException(status_code=503, detail="Knowledge graph data not available")
-    
-    nodes = json_data.get('nodes', [])
-    
-    if node_type:
-        nodes = [n for n in nodes if n.get('properties', {}).get('type') == node_type]
-    
-    return nodes[:limit]
+def with_fallback(cypher, parameters=None):
+    """Return Neo4j records or None when a JSON fallback should be attempted."""
+    if neo4j_driver:
+        try:
+            return query_neo4j(cypher, parameters)
+        except Exception:
+            logger.exception("Neo4j query failed")
+    if json_data is None:
+        raise HTTPException(503, "No data source available")
+    return None
 
 
-# API Endpoints
+def node_response(node):
+    # Both backends use the stable exported ID and the same response shape.
+    props = dict(node)
+    identity = props.pop("id")
+    return {"id": identity, "type": props["type"], "properties": props}
+
+
 @app.get("/")
-async def root():
-    """Root endpoint with API information"""
+def root():
     return {
-        "name": "Retraction Watch Knowledge Graph API",
-        "version": "1.0.0",
-        "status": "online",
+        "name": app.title,
+        "version": app.version,
         "neo4j_connected": neo4j_driver is not None,
         "endpoints": {
             "docs": "/docs",
             "statistics": "/api/statistics",
-            "nodes": "/api/nodes",
+            "nodes": "/api/nodes/{node_type}",
             "search": "/api/search",
-            "cypher": "/api/cypher"
-        }
+        },
     }
 
 
 @app.get("/api/statistics")
-async def get_statistics():
-    """Get knowledge graph statistics"""
+def get_statistics():
     if neo4j_driver:
         try:
-            with neo4j_driver.session() as session:
-                # Count nodes
-                node_result = session.run("""
-                    MATCH (n)
-                    RETURN labels(n)[0] as type, count(n) as count
-                """)
-                nodes = {record['type']: record['count'] for record in node_result}
-                
-                # Count edges
-                edge_result = session.run("""
-                    MATCH ()-[r]->()
-                    RETURN type(r) as type, count(r) as count
-                """)
-                edges = {record['type']: record['count'] for record in edge_result}
-                
-                return {
-                    "source": "neo4j",
-                    "nodes": nodes,
-                    "edges": edges,
-                    "total_nodes": sum(nodes.values()),
-                    "total_edges": sum(edges.values())
-                }
-        except Exception as e:
-            logger.error(f"Error querying Neo4j: {e}")
-    
-    # Fallback to JSON
-    if json_data:
-        metadata = json_data.get('metadata', {})
-        stats = metadata.get('statistics', {})
-        
-        return {
-            "source": "json",
-            "nodes": {
-                "Article": stats.get('articles', 0),
-                "Author": stats.get('authors', 0),
-                "Journal": stats.get('journals', 0),
-                "Institution": stats.get('institutions', 0),
-                "Reason": stats.get('reasons', 0)
-            },
-            "edges": {
-                "Authored_By": stats.get('authored_by', 0),
-                "Published_In": stats.get('published_in', 0),
-                "Affiliated_With": stats.get('affiliated_with', 0),
-                "Retracted_For": stats.get('retracted_for', 0)
+            nodes = {
+                r["type"]: r["count"]
+                for r in query_neo4j(
+                    "MATCH (n:RWGraph) RETURN n.type AS type, count(n) AS count"
+                )
             }
-        }
-    
-    raise HTTPException(status_code=503, detail="No data source available")
+            edges = {
+                r["type"]: r["count"]
+                for r in query_neo4j(
+                    "MATCH (:RWGraph)-[r]->(:RWGraph) RETURN type(r) AS type, count(r) AS count"
+                )
+            }
+            return {
+                "source": "neo4j",
+                "nodes": nodes,
+                "edges": edges,
+                "total_nodes": sum(nodes.values()),
+                "total_edges": sum(edges.values()),
+            }
+        except Exception:
+            logger.exception("Neo4j statistics failed")
+    if json_data is None:
+        raise HTTPException(503, "No data source available")
+    nodes = Counter(n["properties"]["type"] for n in json_data["nodes"])
+    edges = Counter(e["properties"]["type"] for e in json_data["edges"])
+    return {
+        "source": "json",
+        "nodes": {k: nodes[k] for k in NODE_TYPES},
+        "edges": {k: edges[k] for k in EDGE_TYPES},
+        "total_nodes": sum(nodes.values()),
+        "total_edges": sum(edges.values()),
+    }
 
 
 @app.get("/api/nodes/{node_type}")
-async def get_nodes_by_type(
-    node_type: str,
+def get_nodes_by_type(
+    node_type: NodeType,
     limit: int = Query(100, ge=1, le=1000),
-    skip: int = Query(0, ge=0)
+    skip: int = Query(0, ge=0),
 ):
-    """Get nodes by type with pagination"""
-    if neo4j_driver:
-        try:
-            cypher = f"""
-            MATCH (n:{node_type})
-            RETURN n
-            SKIP $skip
-            LIMIT $limit
-            """
-            
-            with neo4j_driver.session() as session:
-                result = session.run(cypher, skip=skip, limit=limit)
-                nodes = []
-                for record in result:
-                    node = record['n']
-                    nodes.append({
-                        'id': node.element_id,
-                        'type': node_type,
-                        'properties': dict(node)
-                    })
-                
-                return {
-                    "nodes": nodes,
-                    "count": len(nodes),
-                    "skip": skip,
-                    "limit": limit
-                }
-        except Exception as e:
-            logger.error(f"Error querying Neo4j: {e}")
-    
-    # Fallback to JSON
-    if json_data:
-        nodes = [n for n in json_data.get('nodes', [])
-                if n.get('properties', {}).get('type') == node_type]
-        
-        paginated = nodes[skip:skip + limit]
-        
-        return {
-            "nodes": paginated,
-            "count": len(paginated),
-            "total": len(nodes),
-            "skip": skip,
-            "limit": limit
-        }
-    
-    raise HTTPException(status_code=503, detail="No data source available")
+    records = with_fallback(
+        f"MATCH (n:RWGraph:{node_type}) RETURN n ORDER BY n.id SKIP $skip LIMIT $limit",
+        {"skip": skip, "limit": limit},
+    )
+    if records is not None:
+        nodes = [node_response(r["n"]) for r in records]
+    else:
+        matches = sorted(
+            (n for n in json_data["nodes"] if n["properties"]["type"] == node_type),
+            key=lambda n: n["id"],
+        )
+        nodes = [dict(n, type=node_type) for n in matches[skip : skip + limit]]
+    return {"nodes": nodes, "count": len(nodes), "skip": skip, "limit": limit}
 
 
 @app.get("/api/search")
-async def search_nodes(
-    q: str = Query(..., min_length=1),
-    node_type: Optional[str] = None,
-    limit: int = Query(50, ge=1, le=500)
+def search_nodes(
+    q: str = Query(..., min_length=1, max_length=500),
+    node_type: Optional[NodeType] = None,
+    limit: int = Query(50, ge=1, le=500),
 ):
-    """Search nodes by name or properties"""
-    if neo4j_driver:
-        try:
-            type_filter = f":{node_type}" if node_type else ""
-            cypher = f"""
-            MATCH (n{type_filter})
-            WHERE n.name CONTAINS $query OR n.title CONTAINS $query
-            RETURN n
-            LIMIT $limit
-            """
-            
-            with neo4j_driver.session() as session:
-                result = session.run(cypher, query=q, limit=limit)
-                nodes = []
-                for record in result:
-                    node = record['n']
-                    node_labels = list(node.labels)
-                    nodes.append({
-                        'id': node.element_id,
-                        'type': node_labels[0] if node_labels else 'Unknown',
-                        'properties': dict(node)
-                    })
-                
-                return {
-                    "query": q,
-                    "nodes": nodes,
-                    "count": len(nodes)
-                }
-        except Exception as e:
-            logger.error(f"Error searching Neo4j: {e}")
-    
-    # Fallback to JSON
-    if json_data:
-        q_lower = q.lower()
-        nodes = []
-        
-        for node in json_data.get('nodes', []):
-            props = node.get('properties', {})
-            
-            # Check node type filter
-            if node_type and props.get('type') != node_type:
-                continue
-            
-            # Search in properties
-            match = False
-            for value in props.values():
-                if isinstance(value, str) and q_lower in value.lower():
-                    match = True
-                    break
-            
-            if match:
-                nodes.append(node)
-            
-            if len(nodes) >= limit:
-                break
-        
-        return {
-            "query": q,
-            "nodes": nodes,
-            "count": len(nodes)
-        }
-    
-    raise HTTPException(status_code=503, detail="No data source available")
-
-
-@app.post("/api/cypher")
-async def execute_cypher(query: CypherQuery):
-    """Execute custom Cypher query (Neo4j only)"""
-    if not neo4j_driver:
-        raise HTTPException(
-            status_code=503,
-            detail="Neo4j database not available. This endpoint requires Neo4j connection."
-        )
-    
-    try:
-        records = query_neo4j(query.query, query.parameters)
-        
-        return {
-            "query": query.query,
-            "records": records,
-            "count": len(records)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Query execution failed: {str(e)}")
+    label = f":{node_type}" if node_type else ""
+    records = with_fallback(
+        f"""MATCH (n:RWGraph{label})
+        WHERE any(key IN keys(n) WHERE toLower(toString(n[key])) CONTAINS toLower($query))
+        RETURN n ORDER BY n.id LIMIT $limit""",
+        {"query": q, "limit": limit},
+    )
+    if records is not None:
+        nodes = [node_response(r["n"]) for r in records]
+    else:
+        matches = sorted(json_data["nodes"], key=lambda n: n["id"])
+        nodes = [
+            dict(n, type=n["properties"]["type"])
+            for n in matches
+            if (node_type is None or n["properties"]["type"] == node_type)
+            and any(
+                q.lower() in value.lower()
+                for value in n["properties"].values()
+                if isinstance(value, str)
+            )
+        ][:limit]
+    return {"query": q, "nodes": nodes, "count": len(nodes)}
 
 
 @app.get("/api/articles/{record_id}")
-async def get_article(record_id: str):
-    """Get article details with related entities"""
-    if neo4j_driver:
-        try:
-            cypher = """
-            MATCH (a:Article {record_id: $record_id})
-            OPTIONAL MATCH (author:Author)-[:Authored_By]->(a)
-            OPTIONAL MATCH (a)-[:Published_In]->(j:Journal)
-            OPTIONAL MATCH (a)-[:Retracted_For]->(r:Reason)
-            RETURN a, collect(DISTINCT author) as authors, j, collect(DISTINCT r) as reasons
-            """
-            
-            with neo4j_driver.session() as session:
-                result = session.run(cypher, record_id=record_id)
-                record = result.single()
-                
-                if not record:
-                    raise HTTPException(status_code=404, detail="Article not found")
-                
-                return {
-                    "article": dict(record['a']) if record['a'] else None,
-                    "authors": [dict(a) for a in record['authors'] if a],
-                    "journal": dict(record['j']) if record['j'] else None,
-                    "reasons": [dict(r) for r in record['reasons'] if r]
-                }
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error querying Neo4j: {e}")
-    
-    # Fallback to JSON
-    if json_data:
-        # Find article node
-        article_node = None
-        for node in json_data.get('nodes', []):
-            props = node.get('properties', {})
-            if props.get('type') == 'Article' and props.get('record_id') == record_id:
-                article_node = node
-                break
-        
-        if not article_node:
-            raise HTTPException(status_code=404, detail="Article not found")
-        
-        article_id = article_node['id']
-        
-        # Find related nodes
-        authors = []
-        journal = None
-        reasons = []
-        
-        for edge in json_data.get('edges', []):
-            if edge['target'] == article_id and edge['properties'].get('type') == 'Authored_By':
-                # Find author node
-                for node in json_data.get('nodes', []):
-                    if node['id'] == edge['source']:
-                        authors.append(node['properties'])
-            
-            elif edge['source'] == article_id and edge['properties'].get('type') == 'Published_In':
-                # Find journal node
-                for node in json_data.get('nodes', []):
-                    if node['id'] == edge['target']:
-                        journal = node['properties']
-            
-            elif edge['source'] == article_id and edge['properties'].get('type') == 'Retracted_For':
-                # Find reason node
-                for node in json_data.get('nodes', []):
-                    if node['id'] == edge['target']:
-                        reasons.append(node['properties'])
-        
+def get_article(record_id: str):
+    records = with_fallback(
+        """
+        MATCH (a:RWGraph:Article {record_id: $record_id})
+        OPTIONAL MATCH (author:RWGraph:Author)-[:Authored_By]->(a)
+        OPTIONAL MATCH (a)-[:Published_In]->(j:RWGraph:Journal)
+        OPTIONAL MATCH (a)-[:Retracted_For]->(r:RWGraph:Reason)
+        OPTIONAL MATCH (a)-[:Has_Institution]->(i:RWGraph:Institution)
+        RETURN a, collect(DISTINCT author) AS authors, j,
+               collect(DISTINCT r) AS reasons, collect(DISTINCT i) AS institutions
+        """,
+        {"record_id": record_id},
+    )
+    if records is not None:
+        if not records:
+            raise HTTPException(404, "Article not found")
+        row = records[0]
+
+        def properties(node):
+            return {k: v for k, v in node.items() if k != "id"}
+
         return {
-            "article": article_node['properties'],
-            "authors": authors,
-            "journal": journal,
-            "reasons": reasons
+            "article": properties(row["a"]),
+            "authors": [properties(n) for n in row["authors"]],
+            "journal": properties(row["j"]) if row["j"] else None,
+            "reasons": [properties(n) for n in row["reasons"]],
+            "institutions": [properties(n) for n in row["institutions"]],
         }
-    
-    raise HTTPException(status_code=503, detail="No data source available")
+    index = {n["id"]: n["properties"] for n in json_data["nodes"]}
+    identity = f"Article:{record_id}"
+    if identity not in index:
+        raise HTTPException(404, "Article not found")
+    authors, journals, reasons, institutions = [], [], [], []
+    for edge in json_data["edges"]:
+        kind = edge["properties"]["type"]
+        if edge["target"] == identity and kind == "Authored_By":
+            authors.append(index[edge["source"]])
+        elif edge["source"] == identity:
+            if kind == "Published_In":
+                journals.append(index[edge["target"]])
+            elif kind == "Retracted_For":
+                reasons.append(index[edge["target"]])
+            elif kind == "Has_Institution":
+                institutions.append(index[edge["target"]])
+    return {
+        "article": index[identity],
+        "authors": authors,
+        "journal": journals[0] if journals else None,
+        "reasons": reasons,
+        "institutions": institutions,
+    }
+
+
+def ranking(kind, limit):
+    relationship, label, field, count_field = (
+        ("Published_In", "Journal", "journal", "retraction_count")
+        if kind == "journals"
+        else ("Retracted_For", "Reason", "reason", "count")
+    )
+    records = with_fallback(
+        f"""
+        MATCH (a:RWGraph:Article)-[:{relationship}]->(n:RWGraph:{label})
+        WHERE a.retraction_nature = 'Retraction'
+        RETURN n.name AS {field}, count(DISTINCT a) AS {count_field}
+        ORDER BY {count_field} DESC, {field} LIMIT $limit""",
+        {"limit": limit},
+    )
+    if records is None:
+        index = {n["id"]: n["properties"] for n in json_data["nodes"]}
+        counts = Counter(
+            e["target"]
+            for e in json_data["edges"]
+            if e["properties"]["type"] == relationship
+            and index[e["source"]].get("retraction_nature") == "Retraction"
+        )
+        records = [
+            {field: index[key]["name"], count_field: count}
+            for key, count in sorted(
+                counts.items(), key=lambda item: (-item[1], index[item[0]]["name"])
+            )[:limit]
+        ]
+    return {kind: records, "count": len(records)}
 
 
 @app.get("/api/journals/top")
-async def get_top_journals(limit: int = Query(10, ge=1, le=100)):
-    """Get top journals by retraction count"""
-    if neo4j_driver:
-        try:
-            cypher = """
-            MATCH (a:Article)-[:Published_In]->(j:Journal)
-            RETURN j.name as journal, count(a) as retraction_count
-            ORDER BY retraction_count DESC
-            LIMIT $limit
-            """
-            
-            records = query_neo4j(cypher, {'limit': limit})
-            
-            return {
-                "journals": records,
-                "count": len(records)
-            }
-        except Exception as e:
-            logger.error(f"Error querying Neo4j: {e}")
-    
-    raise HTTPException(
-        status_code=501,
-        detail="This endpoint requires Neo4j connection"
-    )
+def get_top_journals(limit: int = Query(10, ge=1, le=100)):
+    return ranking("journals", limit)
 
 
 @app.get("/api/reasons/top")
-async def get_top_reasons(limit: int = Query(10, ge=1, le=100)):
-    """Get top retraction reasons"""
-    if neo4j_driver:
-        try:
-            cypher = """
-            MATCH (a:Article)-[:Retracted_For]->(r:Reason)
-            RETURN r.name as reason, count(a) as count
-            ORDER BY count DESC
-            LIMIT $limit
-            """
-            
-            records = query_neo4j(cypher, {'limit': limit})
-            
-            return {
-                "reasons": records,
-                "count": len(records)
-            }
-        except Exception as e:
-            logger.error(f"Error querying Neo4j: {e}")
-    
-    raise HTTPException(
-        status_code=501,
-        detail="This endpoint requires Neo4j connection"
-    )
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Close Neo4j connection on shutdown"""
-    if neo4j_driver:
-        neo4j_driver.close()
-        logger.info("Neo4j connection closed")
+def get_top_reasons(limit: int = Query(10, ge=1, le=100)):
+    return ranking("reasons", limit)
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

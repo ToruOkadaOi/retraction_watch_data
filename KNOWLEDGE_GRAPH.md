@@ -1,465 +1,153 @@
-# Knowledge Graph for Retraction Watch Data
+# Retraction Watch knowledge graph
 
-This project provides a comprehensive Knowledge Graph solution for the Retraction Watch dataset, including graph generation, storage, visualization, and querying capabilities.
+Generate a NetworkX graph from the public CSV, export JSON/GraphML/RDF, optionally
+load Neo4j, and query it through a fixed read-only REST API. Articles represent
+notice records, including retractions, corrections, expressions of concern, and
+reinstatements.
 
-## Table of Contents
-- [Overview](#overview)
-- [Features](#features)
-- [Installation](#installation)
-- [Usage](#usage)
-- [API Documentation](#api-documentation)
-- [Neo4j Integration](#neo4j-integration)
-- [CI/CD Automation](#cicd-automation)
-- [Graph Schema](#graph-schema)
-- [Example Queries](#example-queries)
+## Setup and generation
 
-## Overview
+Requires Python 3.11 or later. Neo4j 5.x is optional.
 
-The Knowledge Graph transforms the Retraction Watch CSV dataset into a rich, interconnected graph structure with:
-- **Entities**: Authors, Articles, Journals, Institutions, Reasons
-- **Relationships**: Authored_By, Published_In, Affiliated_With, Retracted_For
-- **Properties**: Metadata like titles, dates, DOIs, and more
-
-## Features
-
-✅ **Graph Generation**
-- Parse CSV data into a structured knowledge graph
-- Error checking for missing nodes/edges
-- Comprehensive statistics and logging
-
-✅ **Visualization**
-- NetworkX-based graph visualization
-- Support for large graphs through sampling
-
-✅ **Multiple Export Formats**
-- JSON (for programmatic access)
-- GraphML (for Gephi visualization)
-- RDF (for semantic web applications)
-
-✅ **Neo4j Integration**
-- Store graph in Neo4j database
-- Efficient batch loading
-- Cypher query support
-
-✅ **REST API**
-- FastAPI-based query interface
-- Search, filter, and aggregate operations
-- Works with or without Neo4j
-
-✅ **CI/CD Automation**
-- Automatic graph regeneration on data updates
-- GitHub Actions workflow
-- Artifact storage
-
-## Installation
-
-### Prerequisites
-- Python 3.11 or higher
-- (Optional) Neo4j 5.x for database storage
-
-### Setup
-
-1. Clone the repository:
-```bash
-git clone https://github.com/ToruOkadaOi/retraction_watch_data.git
-cd retraction_watch_data
-```
-
-2. Install dependencies:
 ```bash
 pip install -r requirements.txt
-```
-
-3. Create outputs directory:
-```bash
-mkdir -p outputs
-```
-
-## Usage
-
-### Generate Knowledge Graph
-
-```bash
 python knowledge_graph.py
 ```
 
-This will:
-- Parse `retraction_watch.csv`
-- Generate the knowledge graph
-- Create visualizations and exports in the `outputs/` directory
+The generator reads `retraction_watch.csv` in the current directory and writes
+`outputs/knowledge_graph.{json,graphml,rdf,png}`. It accepts UTF-8 with or without
+a BOM. Missing required columns, malformed row widths, duplicate headers or record
+IDs, empty titles, unknown notice types, invalid encoding, and empty input fail
+the build. No incomplete graph is exported. All formats finish in a staging
+directory before publication; each file is replaced by an atomic rename.
 
-**Output files:**
-- `outputs/knowledge_graph.json` - JSON representation
-- `outputs/knowledge_graph.graphml` - GraphML for Gephi
-- `outputs/knowledge_graph.rdf` - RDF/XML format
-- `outputs/knowledge_graph.png` - Sample visualization
+The full graph needs substantial memory and disk space. Visualizations sample
+100 nodes by default. Full outputs are uploaded as CI artifacts rather than
+committed to Git. Existing sample outputs are illustrative and may use an older
+schema; regenerate before using them for analysis.
 
-In CI, these full graph outputs are uploaded as workflow artifacts instead of committed to the repository because several files exceed GitHub's normal 100 MB file limit.
+## Graph schema, version 2
 
-### Load into Neo4j (Optional)
+Node types are `Article`, `Author`, `Journal`, `Institution`, and `Reason`.
+Article IDs are `Article:<Record ID>`. Other IDs use their type and exact trimmed
+name. Authors with matching names are not verified to be the same person.
 
-If you have Neo4j running:
+| Relationship | Direction | Meaning |
+| --- | --- | --- |
+| `Authored_By` | Author → Article | Author listed for the notice record |
+| `Published_In` | Article → Journal | Source journal |
+| `Has_Institution` | Article → Institution | Institution listed for the article |
+| `Retracted_For` | Article → Reason | Listed notice reason; retained name for compatibility |
+
+The source does not map individual authors to institutions. Version 2 removes
+`Affiliated_With` and replaces it with `Has_Institution`; the statistics key is
+`has_institution`. Article `countries` retains the source country list without
+assigning every country to each institution. Statistics count actual unique graph
+nodes and edges. `Article` counts include every notice type; retraction rankings
+filter `retraction_nature = 'Retraction'`.
+
+JSON metadata contains `schema_version: 2`, a generation timestamp, and graph
+statistics. JSON includes node and relationship properties. RDF resource IDs are
+percent-encoded. RDF exports node properties and relationships; relationship date
+properties remain available in JSON and GraphML.
+
+## Neo4j import
 
 ```bash
-# Set environment variables
 export NEO4J_URI="neo4j://localhost:7687"
 export NEO4J_USER="neo4j"
-export NEO4J_PASSWORD="your-password"
-
-# Load the graph
+export NEO4J_PASSWORD="your-loader-password"
 python neo4j_integration.py
 ```
 
-### Start the API Server
+The password is mandatory. Every node is labeled `RWGraph` and its entity type,
+and stores the stable exported `id`. The loader validates the complete snapshot
+before writing and replaces only `RWGraph` nodes in one transaction. Repeat loads
+replace the prior snapshot without duplicates. Errors preserve the prior graph
+and make the CLI exit nonzero. Unmarked nodes are preserved; relationships touching
+replaced nodes are deleted with those nodes. Reserve `RWGraph` for this loader.
+
+Use a dedicated database with enough transaction memory for the full replacement.
+Legacy unmarked imports are deliberately not deleted or adopted. For migration,
+start with a fresh dedicated database; old global uniqueness constraints may
+conflict with a new import. Back up and handle any legacy database separately.
+
+## REST API
 
 ```bash
-python api.py
+# Use a separate Neo4j account with read-only grants for the API.
+export NEO4J_USER="your-readonly-user"
+export NEO4J_PASSWORD="your-readonly-password"
+uvicorn api:app --host 127.0.0.1 --port 8000
 ```
 
-Or with uvicorn:
-```bash
-uvicorn api:app --host 0.0.0.0 --port 8000 --reload
-```
+Without a working Neo4j connection, queries use the validated schema version 2
+file `outputs/knowledge_graph.json`. Generate it locally or download a CI artifact.
+Neo4j queries only read nodes imported by the current loader.
 
-Access the API documentation at: http://localhost:8000/docs
+| Endpoint | Parameters / result |
+| --- | --- |
+| `GET /` | API version and endpoints |
+| `GET /api/statistics` | Actual node/edge counts, totals, and source |
+| `GET /api/nodes/{node_type}` | `limit` 1–1000, `skip` ≥0; stable ID order |
+| `GET /api/search` | `q` 1–500 characters, optional `node_type`, `limit` 1–500 |
+| `GET /api/articles/{record_id}` | Article, authors, journal, reasons, institutions |
+| `GET /api/journals/top` | Retraction notice counts; `limit` 1–100 |
+| `GET /api/reasons/top` | Retraction notice counts; `limit` 1–100 |
 
-If Neo4j is not configured, the API falls back to `outputs/knowledge_graph.json`. That file must be generated locally with `python knowledge_graph.py` or downloaded from a GitHub Actions artifact.
+Node types must exactly match the five schema types; invalid values return 422.
+Node responses include `id`, `type`, and `properties` on both backends. Pagination
+returns `nodes`, `count`, `skip`, and `limit`. Search is case-insensitive. Data
+unavailability returns 503; missing articles return 404. Interactive docs: `/docs`.
 
-## API Documentation
+**API version 2 migration:** `/api/cypher` is removed and returns 404. Run custom
+queries through a separately authorized Neo4j client. Rebuild schema version 1
+exports before serving or loading them. Consumers of `Affiliated_With`,
+`affiliated_with`, or institution `country` must migrate to the article-based
+schema above. Neo4j node responses now use exported IDs rather than element IDs.
 
-### Endpoints
-
-#### GET /
-Root endpoint with API information
-
-#### GET /api/statistics
-Get knowledge graph statistics
-```json
-{
-  "source": "neo4j",
-  "nodes": {
-    "Article": 68489,
-    "Author": 245632,
-    "Journal": 8543,
-    "Institution": 32145,
-    "Reason": 87
-  },
-  "edges": {
-    "Authored_By": 312456,
-    "Published_In": 68489,
-    "Affiliated_With": 198234,
-    "Retracted_For": 89234
-  }
-}
-```
-
-#### GET /api/nodes/{node_type}
-Get nodes by type with pagination
-- Parameters: `limit` (default: 100), `skip` (default: 0)
-- Example: `/api/nodes/Article?limit=10&skip=0`
-
-#### GET /api/search
-Search nodes by name or properties
-- Parameters: `q` (required), `node_type` (optional), `limit` (default: 50)
-- Example: `/api/search?q=cancer&node_type=Article&limit=20`
-
-#### GET /api/articles/{record_id}
-Get article details with related entities
-- Example: `/api/articles/69157`
-
-#### GET /api/journals/top
-Get top journals by retraction count
-- Parameters: `limit` (default: 10)
-- Example: `/api/journals/top?limit=20`
-
-#### GET /api/reasons/top
-Get top retraction reasons
-- Parameters: `limit` (default: 10)
-
-#### POST /api/cypher
-Execute custom Cypher query (Neo4j only)
-```json
-{
-  "query": "MATCH (a:Article) RETURN a LIMIT 10",
-  "parameters": {}
-}
-```
-
-## Neo4j Integration
-
-### Database Schema
-
-**Node Types:**
-- `Article` - Retracted articles with properties: record_id, name (title), subject, dates, DOIs, etc.
-- `Author` - Authors with property: name
-- `Journal` - Journals with properties: name, publisher
-- `Institution` - Institutions with properties: name, country
-- `Reason` - Retraction reasons with property: name
-
-**Relationship Types:**
-- `Authored_By` - (Author)-[:Authored_By]->(Article)
-- `Published_In` - (Article)-[:Published_In]->(Journal)
-- `Affiliated_With` - (Author)-[:Affiliated_With]->(Institution)
-- `Retracted_For` - (Article)-[:Retracted_For]->(Reason)
-
-### Setup Neo4j
-
-1. Install Neo4j:
-```bash
-# Using Docker
-docker run -d \
-  --name neo4j \
-  -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/your-password \
-  neo4j:latest
-```
-
-2. Access Neo4j Browser: http://localhost:7474
-
-3. Load the knowledge graph:
-```bash
-export NEO4J_PASSWORD="your-password"
-python neo4j_integration.py
-```
-
-## CI/CD Automation
-
-The repository includes a GitHub Actions workflow that automatically:
-1. Detects changes to `retraction_watch.csv`
-2. Regenerates the knowledge graph
-3. Uploads generated graph files as workflow artifacts
-
-### Workflow Configuration
-
-File: `.github/workflows/knowledge-graph-update.yml`
-
-**Triggers:**
-- Push to main branch (when CSV changes)
-- Manual workflow dispatch
-
-The `.github/workflows/sync-gitlab.yml` workflow also generates and uploads graph artifacts after it syncs a changed dataset from GitLab.
-
-**Optional Features** (commented out in workflow):
-- Neo4j loading (requires secrets: NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-- Slack/Email notifications
-
-### Enable Notifications
-
-To enable notifications, uncomment the notification steps in the workflow and configure:
-
-For Slack:
-```yaml
-- name: Send Slack notification
-  uses: slackapi/slack-github-action@v1
-  with:
-    webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-    payload: |
-      {
-        "text": "Knowledge Graph updated successfully!"
-      }
-```
-
-For Email:
-```yaml
-- name: Send email
-  uses: dawidd6/action-send-mail@v3
-  with:
-    server_address: smtp.gmail.com
-    server_port: 465
-    username: ${{ secrets.EMAIL_USERNAME }}
-    password: ${{ secrets.EMAIL_PASSWORD }}
-    subject: Knowledge Graph Updated
-    to: your-email@example.com
-    from: GitHub Actions
-    body: The Retraction Watch Knowledge Graph has been updated.
-```
-
-## Graph Schema
-
-### Entity Properties
-
-**Article**
-- `record_id` (unique identifier)
-- `name` (title)
-- `subject`
-- `retraction_date`
-- `original_paper_date`
-- `retraction_nature`
-- `article_type`
-- `retraction_doi`
-- `original_paper_doi`
-- `paywalled`
-- `notes`
-- `urls`
-
-**Author**
-- `name`
-
-**Journal**
-- `name`
-- `publisher`
-
-**Institution**
-- `name`
-- `country`
-
-**Reason**
-- `name`
-
-### Relationship Properties
-
-**Published_In**
-- `date` (publication date)
-
-**Retracted_For**
-- `date` (retraction date)
-
-## Example Queries
-
-### Cypher Queries (Neo4j)
-
-1. **Find articles by author:**
-```cypher
-MATCH (author:Author {name: "John Smith"})-[:Authored_By]->(article:Article)
-RETURN article.name, article.retraction_date
-LIMIT 10
-```
-
-2. **Top journals by retraction count:**
-```cypher
-MATCH (a:Article)-[:Published_In]->(j:Journal)
-RETURN j.name as journal, count(a) as retractions
-ORDER BY retractions DESC
-LIMIT 10
-```
-
-3. **Most common retraction reasons:**
-```cypher
-MATCH (a:Article)-[:Retracted_For]->(r:Reason)
-RETURN r.name as reason, count(a) as count
-ORDER BY count DESC
-```
-
-4. **Articles with multiple authors from same institution:**
-```cypher
-MATCH (author:Author)-[:Affiliated_With]->(inst:Institution)
-WITH inst, collect(author) as authors
-WHERE size(authors) > 5
-MATCH (author)-[:Authored_By]->(article:Article)
-WHERE author IN authors
-RETURN inst.name, article.name, collect(author.name) as authors
-LIMIT 10
-```
-
-5. **Retraction timeline by year:**
-```cypher
-MATCH (a:Article)
-WHERE a.retraction_date IS NOT NULL
-WITH split(a.retraction_date, '/')[2] as year
-RETURN year, count(*) as retractions
-ORDER BY year DESC
-```
-
-### API Queries (REST)
-
-1. **Search for cancer-related articles:**
 ```bash
 curl "http://localhost:8000/api/search?q=cancer&node_type=Article&limit=10"
-```
-
-2. **Get top journals:**
-```bash
 curl "http://localhost:8000/api/journals/top?limit=20"
-```
-
-3. **Get article details:**
-```bash
 curl "http://localhost:8000/api/articles/69157"
 ```
 
-4. **Execute custom Cypher:**
+Example query in an authorized Neo4j client:
+
+```cypher
+MATCH (a:RWGraph:Article)-[:Published_In]->(j:RWGraph:Journal)
+WHERE a.retraction_nature = 'Retraction'
+RETURN j.name AS journal, count(DISTINCT a) AS retraction_count
+ORDER BY retraction_count DESC, journal
+LIMIT 10
+```
+
+Historical notice counts do not resolve a publication's current status. Reinstated
+papers can also have earlier retraction records.
+
+## Tests and automation
+
 ```bash
-curl -X POST "http://localhost:8000/api/cypher" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "MATCH (a:Article) WHERE a.subject CONTAINS \"Biology\" RETURN a.name LIMIT 5"
-  }'
+pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
-### Python Queries
+Tests use temporary output directories and do not overwrite tracked sample graphs.
+`python test_setup.py` runs pytest; `python test_sample.py` verifies a real CSV sample
+and all export formats in a temporary directory.
 
-```python
-import json
+To include the integration test, point these variables only at a **disposable**
+Neo4j instance. The test replaces its managed graph and creates a test sentinel.
 
-# Load JSON graph
-with open('outputs/knowledge_graph.json', 'r') as f:
-    data = json.load(f)
-
-# Get all articles
-articles = [n for n in data['nodes'] 
-           if n['properties']['type'] == 'Article']
-
-# Get all edges of type "Retracted_For"
-retraction_edges = [e for e in data['edges']
-                   if e['properties']['type'] == 'Retracted_For']
-
-print(f"Total articles: {len(articles)}")
-print(f"Total retraction reasons: {len(retraction_edges)}")
+```bash
+export TEST_NEO4J_URI="bolt://localhost:17687"
+export TEST_NEO4J_PASSWORD="your-disposable-instance-password"
+python -m pytest -q
 ```
 
-## Visualization with Gephi
+Code CI runs regression tests with a disposable Neo4j service. CSV update workflows
+run non-integration tests before generation and upload artifacts only after
+successful generation. GitLab sync compares both staged CSV changes and README
+changes against HEAD, then commits/pushes only when either changed.
 
-1. Open Gephi
-2. File → Open → Select `outputs/knowledge_graph.graphml`
-3. Choose "Directed Graph" when prompted
-4. Apply layouts:
-   - Force Atlas 2 for large graphs
-   - Fruchterman Reingold for smaller graphs
-5. Color nodes by type
-6. Size nodes by degree (connections)
-7. Export visualization
-
-## Error Handling
-
-The knowledge graph generator includes comprehensive error checking:
-- **Missing nodes**: Warns when edges reference non-existent nodes
-- **Empty fields**: Handles missing data gracefully
-- **Malformed data**: Logs errors with row numbers for debugging
-- **Statistics**: Tracks all errors in `stats['errors']` list
-
-View errors in the console output or check the JSON export's metadata section.
-
-## Performance Considerations
-
-- **Large datasets**: The full Retraction Watch dataset has ~68K articles
-- **Memory usage**: Graph generation requires ~1-2GB RAM
-- **Neo4j loading**: Takes 10-30 minutes depending on hardware
-- **Visualization**: Only samples 100 nodes by default to avoid rendering issues
-- **Artifact size**: Full JSON, GraphML, and RDF outputs are each several hundred MB, so CI stores them as workflow artifacts instead of git-tracked files
-
-To adjust sampling for visualization:
-```python
-generator.visualize("output.png", sample_size=500)
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues or pull requests.
-
-## License
-
-This project uses data from Retraction Watch, which is made available by Crossref. Please refer to the Retraction Watch database license and terms of use.
-
-## Support
-
-For issues or questions:
-1. Check the [GitHub Issues](https://github.com/ToruOkadaOi/retraction_watch_data/issues)
-2. Review the API documentation at `/docs` when running the server
-3. Consult the Neo4j documentation for database-specific queries
-
-## Acknowledgments
-
-- Retraction Watch and Crossref for providing the dataset
-- NetworkX for graph processing capabilities
-- Neo4j for graph database functionality
-- FastAPI for the REST API framework
+See [SECURITY.md](SECURITY.md) for security boundaries and deployment guidance.

@@ -1,169 +1,56 @@
-# Knowledge Graph Implementation - Security Summary
+# Security and data integrity
 
-## Security Assessment
+The REST API exposes fixed read queries only. `/api/cypher` has been removed.
+Node type parameters are restricted to Article, Author, Journal, Institution,
+and Reason before any database access. Values are passed as query parameters.
+API queries run with read routing and only select loader-owned `RWGraph` nodes.
+Read routing is not an authorization boundary: deploy the API with a separate
+Neo4j account granted read access only. Use loader credentials only for imports.
 
-This implementation has been designed with security best practices in mind.
+## Imports
 
-### ✅ Security Measures Implemented
+`NEO4J_PASSWORD` is required; there is no fallback password. The loader validates
+the complete schema version 2 JSON snapshot before database writes. It rejects
+unknown labels and relationship types, duplicate IDs/edges, missing endpoints,
+invalid relationship directions, and reported generation errors.
 
-1. **No Hardcoded Credentials**
-   - All sensitive credentials (Neo4j password, API keys) use environment variables
-   - No secrets committed to repository
+Replacement is one transaction, including deletion and all insertion batches.
+Failures roll back to the previous graph and return a nonzero CLI exit status.
+Only nodes marked `RWGraph` are replaced; unmarked data is preserved. Relationships
+touching replaced nodes are removed with those nodes. Reserve this label for this
+loader and use a dedicated database for unrelated applications.
 
-2. **Input Validation**
-   - CSV parsing includes error handling for malformed data
-   - API endpoints validate input parameters
-   - Neo4j queries use parameterized queries to prevent injection
+Imports can require substantial transaction memory for a full snapshot. A memory
+or constraint failure aborts replacement rather than publishing a partial graph.
 
-3. **Error Handling**
-   - Comprehensive error logging without exposing sensitive information
-   - Graceful fallback when Neo4j is unavailable
-   - Validation of node existence before creating edges
+## Source validation
 
-4. **Access Control**
-   - API is read-only by design (suitable for public dataset)
-   - No authentication required (dataset is publicly available)
-   - No write operations exposed through API
+CSV input is decoded strictly as UTF-8 with optional BOM. Required headers,
+duplicate headers, row widths, IDs, duplicate IDs, titles, notice vocabulary, and
+nonempty input are validated. A failed parse blocks exports. The CLI builds all
+exports in a staging directory before replacing published files. Each file rename
+is atomic; consumers needing consistency across multiple formats should read a
+completed build after the generator exits successfully.
 
-5. **Dependency Management**
-   - All dependencies specified in requirements.txt
-   - Using well-maintained, popular libraries (NetworkX, FastAPI, Neo4j driver)
-   - No deprecated or vulnerable dependencies identified
+Article institutions are recorded without inferring individual author affiliations.
+Country lists stay on the article. Nodes keyed by author name can still represent
+multiple people with the same name; the CSV does not supply person identifiers.
+Rankings count only `Retraction` notices, not corrections, expressions of concern,
+or reinstatements. Historical notices do not establish a paper's current status.
 
-### 📊 Data Security
+## Deployment
 
-1. **Data Source**
-   - Dataset from Retraction Watch/Crossref (publicly available)
-   - No personally identifiable information (PII)
-   - No sensitive research data
+Serve the API behind HTTPS and apply request/concurrency limits appropriate to
+your hosting environment. The API provides public dataset access without user
+authentication. Keep credentials out of source control and configure Neo4j TLS
+for remote connections. Dependency versions are minimum requirements, not a
+locked or vulnerability-certified environment; maintain dependency updates and
+security scanning separately.
 
-2. **Data Processing**
-   - All processing done locally
-   - No external API calls during processing
-   - No data transmitted to third parties
+## Verification
 
-3. **Data Storage**
-   - Files stored locally or in Neo4j database
-   - Neo4j access controlled via credentials
-   - No cloud storage of sensitive data
-
-### 🔒 Neo4j Security
-
-1. **Connection Security**
-   - Uses environment variables for credentials
-   - Connection string configurable
-   - TLS/SSL support (when configured in Neo4j)
-
-2. **Query Safety**
-   - All Cypher queries use parameterized queries
-   - No string concatenation of user input
-   - Protection against Cypher injection
-
-3. **Access Control**
-   - Neo4j authentication required
-   - User-provided credentials
-   - No default credentials
-
-### 🌐 API Security
-
-1. **Input Validation**
-   - Query parameters validated (length, type)
-   - Pagination limits enforced
-   - No arbitrary code execution
-
-2. **Error Messages**
-   - Generic error messages to clients
-   - Detailed logging server-side only
-   - No stack traces exposed
-
-3. **Rate Limiting**
-   - Pagination enforced (max 100-1000 items per request)
-   - Query result size limits
-   - Recommended: Add rate limiting middleware for production
-
-### 🚀 CI/CD Security
-
-1. **GitHub Actions**
-   - Uses official GitHub actions
-   - No third-party actions with write access
-   - Secrets properly managed via GitHub Secrets
-
-2. **Artifact Storage**
-   - 30-day retention for artifacts
-   - No sensitive data in artifacts
-   - Public repository (dataset is public)
-
-### ⚠️ Security Recommendations for Production
-
-1. **Add Authentication**
-   - If deploying API publicly, add authentication (OAuth2, API keys)
-   - Rate limiting middleware
-   - CORS configuration
-
-2. **HTTPS Only**
-   - Deploy API behind HTTPS
-   - Configure Neo4j with TLS/SSL
-
-3. **Monitoring**
-   - Add logging and monitoring
-   - Alert on unusual activity
-   - Track API usage patterns
-
-4. **Dependency Updates**
-   - Regular dependency updates
-   - Security scanning (Dependabot, Snyk)
-   - CVE monitoring
-
-5. **Environment Isolation**
-   - Separate dev/prod environments
-   - Different credentials per environment
-   - Network segmentation
-
-### 🔍 Security Scan Results
-
-**Manual Code Review**: ✅ Passed
-- No SQL injection vulnerabilities
-- No XSS vulnerabilities
-- No hardcoded secrets
-- Proper error handling
-- Input validation present
-
-**Dependency Check**: ✅ Passed
-- All dependencies are well-maintained
-- No known vulnerabilities in specified versions
-- Using stable release versions
-
-**CodeQL Analysis**: ⚠️ Could not complete
-- Technical issue with git diff
-- Manual review completed instead
-- No security issues found in manual review
-
-### 📝 Known Limitations
-
-1. **No Authentication**
-   - Current implementation is for public dataset
-   - Add authentication before deploying to production
-
-2. **No Rate Limiting**
-   - API has pagination but no rate limiting
-   - Recommended for production deployment
-
-3. **Large File Generation**
-   - Full dataset generates 100-250MB files
-   - Consider compression or streaming for production
-
-### ✅ Conclusion
-
-This implementation follows security best practices for a public dataset application:
-- ✅ No security vulnerabilities identified
-- ✅ Proper credential management
-- ✅ Input validation and error handling
-- ✅ Safe database queries
-- ✅ Suitable for public deployment with recommended enhancements
-
-For production deployment, implement the recommended security enhancements above.
-
----
-
-**Last Updated**: 2026-02-01
-**Reviewed By**: GitHub Copilot Code Review
+Regression tests cover rejected injection inputs, removal of arbitrary Cypher,
+Unicode/BOM parsing, invalid data, notice-specific rankings, statistics, and sync
+change detection. The optional disposable Neo4j integration test verifies real
+query execution, repeat imports, rollback, and preservation of unowned nodes.
+Run `python -m pytest -q`; see [KNOWLEDGE_GRAPH.md](KNOWLEDGE_GRAPH.md) for setup.

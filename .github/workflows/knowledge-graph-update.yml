@@ -30,11 +30,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
       
       - name: Create outputs directory
         run: mkdir -p outputs
       
+      - name: Run regression tests
+        run: python -m pytest -q -m 'not integration'
+
       - name: Generate Knowledge Graph
         run: |
           echo "Generating Knowledge Graph from retraction_watch.csv..."
@@ -46,23 +49,10 @@ jobs:
           echo "Checking generated files..."
           ls -lh outputs/
           
-          if [ -f "outputs/knowledge_graph.json" ]; then
-            echo "✓ JSON export created"
-            wc -l outputs/knowledge_graph.json
-          fi
-          
-          if [ -f "outputs/knowledge_graph.graphml" ]; then
-            echo "✓ GraphML export created"
-          fi
-          
-          if [ -f "outputs/knowledge_graph.rdf" ]; then
-            echo "✓ RDF export created"
-          fi
-          
-          if [ -f "outputs/knowledge_graph.png" ]; then
-            echo "✓ Visualization created"
-          fi
-      
+          for extension in json graphml rdf png; do
+            test -s "outputs/knowledge_graph.$extension"
+          done
+
       - name: Generate summary
         run: |
           echo "## Knowledge Graph Update Summary" >> $GITHUB_STEP_SUMMARY
@@ -84,6 +74,7 @@ jobs:
           name: knowledge-graph-outputs
           path: outputs/knowledge_graph.*
           retention-days: 30
+          if-no-files-found: error
       
       # Optional: Neo4j integration (if Neo4j is available)
       # Uncomment and configure if you have a Neo4j instance

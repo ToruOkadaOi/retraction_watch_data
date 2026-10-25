@@ -32,9 +32,10 @@ jobs:
 
           latest_date="$(git show -s --format=%cs gitlab/main)"
           grep -q '^This repository contains the latest dataset from Retraction Watch, generated on ' README.md
-          sed -i "s/^This repository contains the latest dataset from Retraction Watch, generated on .*/This repository contains the latest dataset from Retraction Watch, generated on ${latest_date}./" README.md
+          sed -i.bak "s/^This repository contains the latest dataset from Retraction Watch, generated on .*/This repository contains the latest dataset from Retraction Watch, generated on ${latest_date}./" README.md
+          rm README.md.bak
 
-          if git diff --quiet -- README.md retraction_watch.csv; then
+          if git diff --quiet HEAD -- README.md retraction_watch.csv; then
             echo "data_changed=false" >> "$GITHUB_OUTPUT"
             echo "No GitLab data changes to sync"
           else
@@ -54,7 +55,11 @@ jobs:
         if: steps.sync.outputs.data_changed == 'true'
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run regression tests
+        if: steps.sync.outputs.data_changed == 'true'
+        run: python -m pytest -q -m 'not integration'
 
       - name: Generate Knowledge Graph
         if: steps.sync.outputs.data_changed == 'true'
@@ -69,6 +74,7 @@ jobs:
           name: knowledge-graph-outputs
           path: outputs/knowledge_graph.*
           retention-days: 30
+          if-no-files-found: error
 
       - name: Push to GitHub
         if: steps.sync.outputs.data_changed == 'true'

@@ -19,6 +19,15 @@ See [KNOWLEDGE_GRAPH.md](KNOWLEDGE_GRAPH.md) for details on:
 - REST API for querying
 - Automated CI/CD updates
 
+## Version 2 migration
+
+The API now exposes fixed read queries; `/api/cypher` has been removed. Rebuild
+exports for graph schema version 2. Article-to-institution `Has_Institution`
+relationships replace inferred author affiliations. Retraction rankings exclude
+other notice types. Neo4j imports validate the snapshot before replacing only
+loader-owned data in one transaction. See [migration and setup](KNOWLEDGE_GRAPH.md)
+and [security boundaries](SECURITY.md).
+
 ## About the Dataset
 
 Research can be modified after publication, including being corrected or retracted. This is a natural part of the research process and important for accurately reporting changes. While members can deliver this information to us, Retraction Watch has also collected a large number of retractions. Many of these have not been reported by our members.

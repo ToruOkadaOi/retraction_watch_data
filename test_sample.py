@@ -1,66 +1,43 @@
-"""
-Quick test of Knowledge Graph generation with sample data
-"""
+"""Parse a real sample and verify exports without modifying tracked outputs."""
 
 import csv
-import os
-import logging
+import json
+import tempfile
+from pathlib import Path
+
+import networkx as nx
+from rdflib import Graph
+
+from graph_schema import validate_snapshot
 from knowledge_graph import KnowledgeGraphGenerator
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-
-def test_with_sample():
-    """Test with first 100 rows of data"""
-    logger.info("Testing Knowledge Graph generation with sample data...")
-    
-    # Create sample CSV
-    sample_csv = "sample_data.csv"
-    
-    with open("retraction_watch.csv", 'r', encoding='latin-1', newline='') as infile:
-        reader = csv.reader(infile)
-        with open(sample_csv, 'w', encoding='utf-8', newline='') as outfile:
-            writer = csv.writer(outfile)
-            
-            # Copy header and first 100 rows
-            for i, row in enumerate(reader):
-                writer.writerow(row)
-                if i >= 100:  # Header + 100 data rows
-                    break
-    
-    logger.info(f"Created sample CSV with 100 rows")
-    
-    # Generate graph
-    generator = KnowledgeGraphGenerator(sample_csv)
+def test_with_sample(tmp_path):
+    source = Path(__file__).parent / "retraction_watch.csv"
+    sample = tmp_path / "sample.csv"
+    with (
+        source.open(encoding="utf-8-sig", newline="") as infile,
+        sample.open("w", encoding="utf-8", newline="") as outfile,
+    ):
+        reader, writer = csv.reader(infile), csv.writer(outfile)
+        for index, row in enumerate(reader):
+            writer.writerow(row)
+            if index == 100:
+                break
+    generator = KnowledgeGraphGenerator(sample)
     generator.parse_csv()
-    
-    # Create outputs
-    os.makedirs("outputs", exist_ok=True)
-    generator.visualize("outputs/sample_graph.png", sample_size=50)
-    generator.export_to_json("outputs/sample_graph.json")
-    generator.export_to_graphml("outputs/sample_graph.graphml")
-    generator.export_to_rdf("outputs/sample_graph.rdf")
-    
-    # Get statistics
-    stats = generator.get_statistics()
-    
-    logger.info("\nSample Graph Statistics:")
-    logger.info(f"  Articles: {stats['articles']}")
-    logger.info(f"  Authors: {stats['authors']}")
-    logger.info(f"  Journals: {stats['journals']}")
-    logger.info(f"  Institutions: {stats['institutions']}")
-    logger.info(f"  Reasons: {stats['reasons']}")
-    logger.info(f"  Total Edges: {stats['authored_by'] + stats['published_in'] + stats['affiliated_with'] + stats['retracted_for']}")
-    logger.info(f"  Errors: {len(stats['errors'])}")
-    
-    # Clean up sample file
-    os.remove(sample_csv)
-    
-    logger.info("\n✓ Sample graph generation successful!")
-    
-    return True
+    generator.export_to_json(tmp_path / "graph.json")
+    generator.export_to_graphml(tmp_path / "graph.graphml")
+    generator.export_to_rdf(tmp_path / "graph.rdf")
+    generator.visualize(tmp_path / "graph.png", sample_size=20)
+    data = validate_snapshot(json.loads((tmp_path / "graph.json").read_text()))
+    assert data["metadata"]["statistics"]["articles"] == 100
+    assert len(nx.read_graphml(tmp_path / "graph.graphml")) == len(generator.graph)
+    assert len(Graph().parse(tmp_path / "graph.rdf")) > len(generator.graph)
+    assert (tmp_path / "graph.png").stat().st_size > 0
+    assert not any(e["properties"]["type"] == "Affiliated_With" for e in data["edges"])
 
 
 if __name__ == "__main__":
-    test_with_sample()
+    with tempfile.TemporaryDirectory() as directory:
+        test_with_sample(Path(directory))
