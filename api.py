@@ -5,12 +5,16 @@ import logging
 import os
 from collections import Counter
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from neo4j import READ_ACCESS, GraphDatabase
 
 from aura_import import STATE_ID
+from dashboard_api import create_dashboard_router
 from graph_schema import EDGE_TYPES, IDENTITY_NOTE, NODE_TYPES, validate_snapshot
 
 logger = logging.getLogger(__name__)
@@ -51,6 +55,23 @@ async def lifespan(app):
 
 app = FastAPI(
     title="Retraction Watch Knowledge Graph API", version="2.0.0", lifespan=lifespan
+)
+
+
+# Browser clients are restricted to the published dashboard and local previews.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            "https://toruokadaoi.github.io,http://localhost:8765,http://127.0.0.1:8765",
+        ).split(",")
+        if origin.strip()
+    ],
+    allow_methods=["GET"],
+    allow_headers=["Accept"],
+    allow_credentials=False,
 )
 
 
@@ -116,6 +137,8 @@ def root():
             "search": "/api/search",
             "name_records": "/api/name-records",
             "readiness": "/ready",
+            "dashboard": "/dashboard/",
+            "dashboard_overview": "/api/dashboard/overview",
         },
     }
 
@@ -219,10 +242,12 @@ def get_article(record_id: str):
         OPTIONAL MATCH (a)-[:Published_In]->(j:RWGraph:Journal)
         OPTIONAL MATCH (a)-[:Retracted_For]->(r:RWGraph:Reason)
         OPTIONAL MATCH (a)-[:Has_Institution]->(i:RWGraph:Institution)
+        OPTIONAL MATCH (state:RWImportState {id: $state_id})
         RETURN a, collect(DISTINCT author) AS authors, j,
-               collect(DISTINCT r) AS reasons, collect(DISTINCT i) AS institutions
+               collect(DISTINCT r) AS reasons, collect(DISTINCT i) AS institutions,
+               state.generation AS snapshot_generation
         """,
-        {"record_id": record_id},
+        {"record_id": record_id, "state_id": STATE_ID},
     )
     if records is not None:
         if not records:
@@ -239,6 +264,7 @@ def get_article(record_id: str):
                 row["institutions"],
                 row["reasons"],
             ),
+            "snapshot_generation": row.get("snapshot_generation"),
             "article": properties(row["a"]),
             "authors": [properties(n) for n in row["authors"]],
             "journal": properties(row["j"]) if row["j"] else None,
@@ -263,6 +289,7 @@ def get_article(record_id: str):
                 institutions.append(index[edge["target"]])
     return {
         **article_lists(index[identity], authors, institutions, reasons),
+        "snapshot_generation": json_data["metadata"].get("generated_at"),
         "article": index[identity],
         "authors": authors,
         "journal": journals[0] if journals else None,
@@ -415,6 +442,13 @@ def get_top_journals(limit: int = Query(10, ge=1, le=100)):
 def get_top_reasons(limit: int = Query(10, ge=1, le=100)):
     return ranking("reasons", limit)
 
+
+app.include_router(create_dashboard_router(with_fallback, lambda: json_data))
+_dashboard = Path(__file__).parent / "dashboard"
+if _dashboard.is_dir():
+    app.mount(
+        "/dashboard", StaticFiles(directory=_dashboard, html=True), name="dashboard"
+    )
 
 if __name__ == "__main__":
     import uvicorn

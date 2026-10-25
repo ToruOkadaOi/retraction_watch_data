@@ -271,3 +271,25 @@ For an import entirely from GitHub Actions, configure repository secrets
 the compact artifact, and imports it with bounded transactions. Concurrent runs
 are serialized. This deployment workflow is manual; ordinary builds do not write
 to an Aura account. Schedule a maintenance window for each refresh.
+
+
+## Public research dashboard
+
+The buildless frontend in `dashboard/` is published to GitHub Pages after **Code CI** passes on main. The **Publish research dashboard** workflow can also be run manually on main. Enable GitHub Pages with **GitHub Actions** as its source. FastAPI serves the same files at `/dashboard/` for a same-origin alternative.
+
+GitHub Pages calls the public Render API; database credentials remain on the API host. The API allows GET requests from `https://toruokadaoi.github.io` and the localhost preview on port 8765. Set `CORS_ORIGINS` to a comma-separated list of exact origins when moving the frontend to another host. CORS is a browser policy, not authentication; the service remains public and read-only.
+
+The dashboard uses these bounded routes:
+
+| Route | Purpose and bounds |
+| --- | --- |
+| `/api/dashboard/overview` | Whole-snapshot notice counts and top ten journals/reasons for retraction notices; cached for 60 seconds with import readiness checks. |
+| `/api/dashboard/records` | Title, DOI, record ID, author/institution name search; optional exact journal/reason and notice filters. `limit` 1–50, `skip` 0–1,000,000. |
+| `/api/dashboard/entities` | Name search for `Author`, `Institution`, or `Journal`; `limit` 1–50. |
+| `/api/dashboard/neighborhood` | One-hop neighbors for a stable `node_id`; `limit` 1–100, `skip` 0–1,000,000. Notice/journal/reason filters constrain article neighbors. |
+
+The frontend requests 30 neighbors at a time and limits the visible graph to 150 nodes and 300 edges. Search and graph responses omit large narrative/source fields; selecting an article retrieves its complete detail separately. Export includes only the visible graph, its active filters, and snapshot provenance. Overview counts describe the whole hosted snapshot, while explorer filters apply to the records and article neighbors. Journal counts do not measure retraction rates, publication volume, or research quality.
+
+Shared name strings are not resolved people or verified affiliations. The compact profile retains singleton names and reasons in article properties; the dashboard shows those complete lists without inventing graph edges. Hosted refreshes are independent of CSV updates. New imports record their completion time; existing snapshots may have no recorded import time. Snapshot generation checks prevent combining responses across an import.
+
+For a disposable local preview, install Python requirements and run `python scripts/preview_dashboard.py`, then open `http://localhost:8765/dashboard/`. This builds a temporary 200-record sample from the real CSV and does not connect to Aura or replace exports. Node 20 or later is needed only for frontend checks: `npm install`, `npm test`, and, with the preview running, `npm run test:dom`. CI also checks the actual queries against Neo4j. DOM tests exercise interactions with a headless graph model; they do not verify browser rendering.

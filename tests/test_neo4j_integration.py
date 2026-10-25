@@ -250,3 +250,64 @@ def test_aura_import_lease_and_unowned_quota(database, aura_snapshot):
             ).single()["status"]
             == "loading"
         )
+
+
+def test_dashboard_queries_on_real_neo4j(database, aura_snapshot, monkeypatch):
+    database.load_from_json(aura_snapshot, batch_size=2)
+    monkeypatch.setattr(api, "neo4j_driver", database.driver)
+    monkeypatch.setattr(api, "json_data", None)
+    with TestClient(api.app) as client:
+        overview = client.get("/api/dashboard/overview")
+        assert overview.status_code == 200, overview.text
+        assert overview.json()["total_nodes"] == 6
+        assert overview.json()["notice_counts"]["Retraction"] == 2
+        assert overview.json()["top_reasons"] == [
+            {"name": "Reason A", "count": 2},
+            {"name": "Reason B", "count": 1},
+        ]
+        assert overview.json()["snapshot"]["imported_at"]
+        records = client.get(
+            "/api/dashboard/records",
+            params={"reason": "Reason A", "notice": "Retraction", "journal": "Journal"},
+        )
+        assert records.status_code == 200, records.text
+        assert [n["record_id"] for n in records.json()["records"]] == ["3", "1"]
+        assert (
+            client.get("/api/dashboard/records", params={"q": "Singleton"}).json()[
+                "records"
+            ][0]["record_id"]
+            == "1"
+        )
+        entities = client.get(
+            "/api/dashboard/entities", params={"q": "Shared", "kind": "Author"}
+        )
+        assert entities.status_code == 200, entities.text
+        assert entities.json()["nodes"][0]["id"] == "Author:Shared Name"
+        page = client.get(
+            "/api/dashboard/neighborhood",
+            params={
+                "node_id": "Author:Shared Name",
+                "reason": "Reason B",
+                "notice": "Retraction",
+                "limit": 1,
+            },
+        )
+        assert page.status_code == 200, page.text
+        assert page.json()["total_neighbors"] == 1
+        assert page.json()["nodes"][1]["id"] == "Article:1"
+        empty = client.get(
+            "/api/dashboard/neighborhood",
+            params={"node_id": "Author:Shared Name", "skip": 999},
+        )
+        assert empty.status_code == 200, empty.text
+        assert empty.json()["nodes"] == [empty.json()["center"]]
+        with database.driver.session() as session:
+            session.run('MATCH (s:RWImportState) SET s.status="loading"').consume()
+        assert client.get("/api/dashboard/overview").status_code == 503
+        assert (
+            client.get(
+                "/api/dashboard/neighborhood", params={"node_id": "Article:1"}
+            ).status_code
+            == 503
+        )
+        monkeypatch.setattr(api, "neo4j_driver", None)

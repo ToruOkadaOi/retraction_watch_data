@@ -61,3 +61,6 @@ htmlcov/
 
 # Full-data Aura artifacts are distributed through CI, not Git.
 outputs/aura/
+
+# Dashboard test dependencies
+node_modules/

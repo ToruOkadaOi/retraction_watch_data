@@ -1,0 +1,11 @@
+{
+  "name": "retraction-watch-dashboard",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/dashboard.test.mjs",
+    "test:dom": "node tests/dashboard-dom.mjs"
+  },
+  "devDependencies": {
+    "linkedom": "0.18.14"
+  }
+}

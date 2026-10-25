@@ -31,11 +31,22 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --test tests/dashboard.test.mjs
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
         env:
           TEST_NEO4J_URI: bolt://localhost:7687
           TEST_NEO4J_PASSWORD: regression-only-password
+      - name: Verify dashboard DOM interactions
+        run: |
+          python scripts/preview_dashboard.py --port 8765 > /tmp/dashboard-preview.log 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
+          npm run test:dom
       - name: Validate full-dataset compact artifact
         if: matrix.python-version == '3.11'
         run: |

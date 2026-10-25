@@ -177,7 +177,7 @@ class AuraImporter:
         tx.run(
             """MATCH (s:RWImportState {id: $state_id})
             SET s.status = 'ready', s.owner = '', s.lease_until = 0,
-                s.nodes = $nodes, s.relationships = $edges""",
+                s.nodes = $nodes, s.relationships = $edges, s.imported_at = toString(datetime())""",
             state_id=STATE_ID,
             nodes=nodes,
             edges=edges,

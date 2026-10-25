@@ -6,6 +6,14 @@ A mirror of [Crossref's Retraction Watch dataset](https://gitlab.com/crossref/re
 
 ## Hosted services
 
+### Research dashboard
+
+[Open the research dashboard](https://toruokadaoi.github.io/retraction_watch_data/) to browse notice statistics, filter records, and explore connected journals and shared names. Select a record to inspect its complete source fields.
+
+Graph exploration loads one neighborhood at a time and shows at most 150 nodes and 300 connections. You can export the visible neighborhood as JSON. The dashboard displays the hosted snapshot fingerprint; its charts count notices, rather than journal retraction rates.
+
+The dashboard is also served [directly by the API](https://retraction-watch-data.onrender.com/dashboard/).
+
 ### Knowledge graph API
 
 - Interactive documentation: [API docs](https://retraction-watch-data.onrender.com/docs)
@@ -81,7 +89,15 @@ To serve a compact snapshot locally:
 GRAPH_JSON_PATH=outputs/aura/knowledge_graph.json uvicorn api:app --host 127.0.0.1 --port 8000
 ```
 
-Open [http://localhost:8000/docs](http://localhost:8000/docs).
+Open [http://localhost:8000/docs](http://localhost:8000/docs) or [the dashboard](http://localhost:8000/dashboard/).
+
+For a disposable preview built from the first 200 real CSV records, without connecting to Aura:
+
+```bash
+python scripts/preview_dashboard.py
+```
+
+Open http://localhost:8765/dashboard/. This preview leaves existing graph outputs unchanged.
 
 </details>
 
