@@ -186,6 +186,6 @@ def test_cors_and_static_dashboard(dashboard_client):
     )
     assert "access-control-allow-origin" not in denied.headers
     assert client.get("/dashboard/").status_code == 200
-    assert "Follow the connections." in client.get("/dashboard/").text
+    assert "Retraction Watch graph" in client.get("/dashboard/").text
     assert client.get("/dashboard/app.mjs").status_code == 200
     assert client.get("/dashboard/vendor/cytoscape.min.js").status_code == 200
