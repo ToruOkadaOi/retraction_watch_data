@@ -271,6 +271,9 @@ def test_dashboard_queries_on_real_neo4j(database, aura_snapshot, monkeypatch):
             params={"reason": "Reason A", "notice": "Retraction", "journal": "Journal"},
         )
         assert records.status_code == 200, records.text
+        generation = overview.json()["snapshot"]["generation"]
+        assert records.json()["snapshot_generation"] == generation
+        assert client.get("/api/articles/1").json()["snapshot_generation"] == generation
         assert [n["record_id"] for n in records.json()["records"]] == ["3", "1"]
         assert (
             client.get("/api/dashboard/records", params={"q": "Singleton"}).json()[
@@ -282,6 +285,7 @@ def test_dashboard_queries_on_real_neo4j(database, aura_snapshot, monkeypatch):
             "/api/dashboard/entities", params={"q": "Shared", "kind": "Author"}
         )
         assert entities.status_code == 200, entities.text
+        assert entities.json()["snapshot_generation"] == generation
         assert entities.json()["nodes"][0]["id"] == "Author:Shared Name"
         page = client.get(
             "/api/dashboard/neighborhood",
@@ -293,6 +297,7 @@ def test_dashboard_queries_on_real_neo4j(database, aura_snapshot, monkeypatch):
             },
         )
         assert page.status_code == 200, page.text
+        assert page.json()["snapshot_generation"] == generation
         assert page.json()["total_neighbors"] == 1
         assert page.json()["nodes"][1]["id"] == "Article:1"
         empty = client.get(

@@ -241,6 +241,7 @@ function renderEntity(node) {
   state.detailEpoch++; const panel = $('detail-content'), page = state.pages.get(node.id); panel.replaceChildren(el('span', 'eyebrow', KIND_LABELS[node.type]), el('h4', 'detail-heading', node.name));
   if (node.type === 'Author') panel.append(el('p', 'detail-note', 'This node groups an exact author-name string. It is not a disambiguated person or an individual misconduct finding.'));
   else if (node.type === 'Institution') panel.append(el('p', 'detail-note', 'This node groups an exact institution-name string listed on multiple records. It does not map individual authors to that institution.'));
+  else if (node.type === 'Reason') panel.append(el('p', 'detail-note', 'Explore notice records listing this source reason. A reason is counted once per record.'));
   else panel.append(el('p', 'detail-note', 'Explore the article records connected to this journal. Active notice, journal, and reason filters apply.'));
   if (node.record_count) panel.append(sectionLabel('Source records listing this name'), el('strong', '', fmt(+node.record_count)));
   panel.append(button(page ? page.has_more ? 'Load more connections →' : 'Connections loaded' : 'Explore connections →', () => expandNode(), 'primary-button detail-expand'));
