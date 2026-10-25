@@ -4,6 +4,18 @@ This repository contains the latest dataset from Retraction Watch, generated on 
 
 ## Knowledge Graph
 
+Query the hosted compact graph through the public read-only API:
+
+- [Interactive API documentation](https://retraction-watch-data.onrender.com/docs)
+- [Graph statistics](https://retraction-watch-data.onrender.com/api/statistics)
+- [Example: search article records for cancer](https://retraction-watch-data.onrender.com/api/search?q=cancer&node_type=Article&limit=5)
+
+The API connects to the graph hosted in Neo4j Aura. Every article record is
+retained, with complete author, institution, and reason lists. Connected author
+and institution nodes represent shared name strings; author-name matches are not
+verified person identities. Hosted graph refreshes run separately from CSV updates.
+The first request after inactivity may be slow while the free service wakes up.
+
 This repository includes a knowledge graph pipeline for the Retraction Watch dataset. The full graph can be generated locally with:
 
 ```bash
