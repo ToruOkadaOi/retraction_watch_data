@@ -31,8 +31,8 @@ jobs:
           git checkout gitlab/main -- retraction_watch.csv
 
           latest_date="$(git show -s --format=%cs gitlab/main)"
-          grep -q '^This repository contains the latest dataset from Retraction Watch, generated on ' README.md
-          sed -i.bak "s/^This repository contains the latest dataset from Retraction Watch, generated on .*/This repository contains the latest dataset from Retraction Watch, generated on ${latest_date}./" README.md
+          grep -Eq '^This repository contains .*generated on \*\*[0-9]{4}-[0-9]{2}-[0-9]{2}\*\*\.$' README.md
+          sed -E -i.bak "s/(generated on \*\*)[0-9]{4}-[0-9]{2}-[0-9]{2}(\*\*\.)$/\1${latest_date}\2/" README.md
           rm README.md.bak
 
           if git diff --quiet HEAD -- README.md retraction_watch.csv; then

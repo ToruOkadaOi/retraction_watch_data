@@ -41,9 +41,12 @@ def test_sync_detects_staged_csv_and_readme_updates(
 
     git(upstream, "init", "-q", "-b", "main")
     (upstream / "retraction_watch.csv").write_text("old\n")
-    (upstream / "README.md").write_text(
-        "This repository contains the latest dataset from Retraction Watch, generated on 2026-10-09.\n"
+    readme = (
+        "This repository contains the latest mirrored snapshot of "
+        "[Crossref's Retraction Watch dataset](https://gitlab.com/crossref/retraction-watch-data), "
+        "generated on **2026-10-09**.\n"
     )
+    (upstream / "README.md").write_text(readme)
     git(upstream, "add", ".")
     git(upstream, "commit", "-qm", "initial")
     git(tmp_path, "clone", "-q", str(upstream), str(local))
@@ -81,4 +84,6 @@ def test_sync_detects_staged_csv_and_readme_updates(
     assert output.read_text().strip() == f"data_changed={str(changed).lower()}"
     if csv_changed:
         assert git(local, "show", "HEAD:retraction_watch.csv") == "updated\n"
+    expected_date = "2026-10-10" if date_changed else "2026-10-09"
+    assert (local / "README.md").read_text() == readme.replace("2026-10-09", expected_date)
     assert not git(local, "status", "--porcelain")
