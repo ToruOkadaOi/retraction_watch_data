@@ -24,6 +24,7 @@ async function get(path, parameters = {}) {
     if (!response.ok) {
       let detail = '';
       try { const data = await response.json(); detail = typeof data.detail === 'string' ? data.detail : ''; } catch { /* Render may return a temporary HTML wake-up page. */ }
+      if (response.status === 503 && detail.startsWith('Graph database unavailable')) throw new Error('The graph database is unavailable. It may be paused or reconnecting; please try again shortly.');
       const error = new Error(response.status === 503 ? (detail.includes('refresh') || detail.includes('Snapshot') ? 'The graph is being refreshed. Please try again after the import completes.' : 'The dataset service is waking up or temporarily unavailable. Please try again in a moment.') : response.status === 404 ? 'The requested graph data is not available. Please try another record or retry shortly.' : 'The dataset request could not be completed. Please retry.');
       error.status = response.status; throw error;
     }

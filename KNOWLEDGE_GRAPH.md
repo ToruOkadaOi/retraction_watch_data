@@ -293,3 +293,24 @@ The frontend requests 30 neighbors at a time and limits the visible graph to 150
 Shared name strings are not resolved people or verified affiliations. The compact profile retains singleton names and reasons in article properties; the dashboard shows those complete lists without inventing graph edges. Hosted refreshes are independent of CSV updates. New imports record their completion time; existing snapshots may have no recorded import time. Snapshot generation checks prevent combining responses across an import.
 
 For a disposable local preview, install Python requirements and run `python scripts/preview_dashboard.py`, then open `http://localhost:8765/dashboard/`. This builds a temporary 200-record sample from the real CSV and does not connect to Aura or replace exports. Node 20 or later is needed only for frontend checks: `npm install`, `npm test`, and, with the preview running, `npm run test:dom`. CI also checks the actual queries against Neo4j. DOM tests exercise interactions with a headless graph model; they do not verify browser rendering.
+
+
+### Recovering from an unavailable Aura instance
+
+If the dashboard loads but data requests return 503, check the API's `/ready`
+endpoint. The API retains a lazy Neo4j driver and attempts to connect on each
+subsequent data request, so it can recover when Aura becomes reachable without
+restarting Render. Failed connection attempts do not discard the driver.
+`/` reports `neo4j_configured` separately from `neo4j_connected`; the latter
+reflects the last database query, while `/ready` actively checks the data source.
+A validated JSON fallback can still serve requests during connectivity failures;
+import maintenance responses always remain unavailable instead of serving stale data.
+
+AuraDB Free can pause after 72 hours of inactivity. Open the
+[Aura Console](https://console.neo4j.io/) and resume a paused instance, wait until
+it is running, then use **Retry connection** in the dashboard. The API cannot
+resume an instance using database credentials. See
+[Neo4j's connection troubleshooting](https://neo4j.com/docs/aura/tutorials/troubleshooting/).
+If Aura is running and requests still fail, inspect Render's application logs
+and verify `NEO4J_URI`, `NEO4J_USER`, and `NEO4J_PASSWORD` in Render's environment
+settings. Keep credentials out of source control and chat.

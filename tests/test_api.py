@@ -1,5 +1,5 @@
 import json
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -102,3 +102,70 @@ def test_database_failure_uses_fallback(client, monkeypatch):
 )
 def test_request_limits(client, path):
     assert client.get(path).status_code == 422
+
+
+def test_lazy_driver_recovers_after_initial_and_later_outages(monkeypatch):
+    from neo4j.exceptions import ServiceUnavailable
+
+    candidate = MagicMock()
+    candidate.verify_connectivity.side_effect = ServiceUnavailable("Aura paused")
+    factory = Mock(return_value=candidate)
+    monkeypatch.setenv("NEO4J_PASSWORD", "regression-only-password")
+    monkeypatch.setattr(api.GraphDatabase, "driver", factory)
+    driver = api.create_neo4j_driver()
+    assert driver is candidate
+    candidate.verify_connectivity.assert_not_called()
+    candidate.close.assert_not_called()
+    monkeypatch.setattr(api, "neo4j_driver", driver)
+    monkeypatch.setattr(api, "neo4j_available", False)
+    monkeypatch.setattr(api, "json_data", None)
+    session = candidate.session.return_value.__enter__.return_value
+    session.run.side_effect = lambda cypher, *args, **kwargs: Mock(
+        data=lambda: [] if "RWImportState" in cypher else [{"count": 4}]
+    )
+    session_context = candidate.session.return_value
+    with TestClient(api.app) as client:
+        assert client.get("/").json()["neo4j_configured"] is True
+        assert client.get("/").json()["neo4j_connected"] is False
+        for _ in range(2):
+            candidate.session.side_effect = ServiceUnavailable("Aura paused")
+            failed = client.get("/ready")
+            assert failed.status_code == 503
+            assert failed.headers["retry-after"] == "15"
+            assert client.get("/").json()["neo4j_connected"] is False
+            assert client.get("/api/nodes/Article").status_code == 503
+            candidate.close.assert_not_called()
+            candidate.session.side_effect = None
+            candidate.session.return_value = session_context
+            recovered = client.get("/ready")
+            assert recovered.status_code == 200, recovered.text
+            assert recovered.json() == {"ready": True, "source": "neo4j"}
+            assert client.get("/").json()["neo4j_connected"] is True
+        assert api.neo4j_driver is driver
+        factory.assert_called_once()
+    candidate.close.assert_called_once()
+
+
+def test_ready_uses_json_during_transport_failure_but_not_import_maintenance(
+    client, monkeypatch
+):
+    from neo4j.exceptions import ServiceUnavailable
+
+    driver = MagicMock()
+    monkeypatch.setattr(api, "neo4j_driver", driver)
+    monkeypatch.setattr(api, "neo4j_available", False)
+    driver.session.side_effect = ServiceUnavailable("unreachable")
+    result = client.get("/ready")
+    assert result.status_code == 200
+    assert result.json()["source"] == "json"
+    assert client.get("/").json()["neo4j_connected"] is False
+    driver.session.side_effect = None
+    session = driver.session.return_value.__enter__.return_value
+    session.run.return_value.data.return_value = [
+        {"status": "loading", "generation": "incomplete"}
+    ]
+    maintenance = client.get("/ready")
+    assert maintenance.status_code == 503
+    assert "refresh incomplete" in maintenance.json()["detail"]
+    assert client.get("/").json()["neo4j_connected"] is True
+    driver.close.assert_not_called()

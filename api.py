@@ -20,19 +20,25 @@ from graph_schema import EDGE_TYPES, IDENTITY_NOTE, NODE_TYPES, validate_snapsho
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 NodeType = Literal["Article", "Author", "Journal", "Institution", "Reason"]
-neo4j_driver = None
-password = os.getenv("NEO4J_PASSWORD")
-if password:
-    candidate = GraphDatabase.driver(
+
+
+def create_neo4j_driver():
+    password = os.getenv("NEO4J_PASSWORD")
+    if not password:
+        return None
+    # Keep the lazy, thread-safe driver even when Aura is temporarily unreachable.
+    # Each later query can establish a connection after the database resumes.
+    return GraphDatabase.driver(
         os.getenv("NEO4J_URI", "neo4j://localhost:7687"),
         auth=(os.getenv("NEO4J_USER", "neo4j"), password),
+        connection_timeout=5,
+        connection_acquisition_timeout=10,
     )
-    try:
-        candidate.verify_connectivity()
-        neo4j_driver = candidate
-    except Exception:
-        candidate.close()
-        logger.warning("Neo4j unavailable; using JSON fallback", exc_info=True)
+
+
+neo4j_driver = create_neo4j_driver()
+# Last observed query result, not merely whether credentials were configured.
+neo4j_available = False
 
 json_data = None
 try:
@@ -90,15 +96,25 @@ def database_state(session):
 
 
 def query_neo4j(cypher, parameters=None):
+    global neo4j_available
     if not neo4j_driver:
         raise HTTPException(503, "Neo4j database not available")
-    with neo4j_driver.session(default_access_mode=READ_ACCESS) as session:
-        before = database_state(session)
-        records = session.run(cypher, parameters or {}).data()
-        # Detect refreshes that started or finished while a query was running.
-        if before != database_state(session):
-            raise HTTPException(503, "Graph changed during query; retry")
+    try:
+        with neo4j_driver.session(default_access_mode=READ_ACCESS) as session:
+            before = database_state(session)
+            records = session.run(cypher, parameters or {}).data()
+            # Detect refreshes that started or finished while a query was running.
+            if before != database_state(session):
+                raise HTTPException(503, "Graph changed during query; retry")
+        neo4j_available = True
         return records
+    except HTTPException:
+        # An import maintenance response still demonstrates database connectivity.
+        neo4j_available = True
+        raise
+    except Exception:
+        neo4j_available = False
+        raise
 
 
 def with_fallback(cypher, parameters=None):
@@ -111,6 +127,12 @@ def with_fallback(cypher, parameters=None):
         except Exception:
             logger.exception("Neo4j query failed")
     if json_data is None:
+        if neo4j_driver:
+            raise HTTPException(
+                503,
+                "Graph database unavailable; check Aura status and retry",
+                headers={"Retry-After": "15"},
+            )
         raise HTTPException(503, "No data source available")
     return None
 
@@ -127,7 +149,8 @@ def root():
     return {
         "name": app.title,
         "version": app.version,
-        "neo4j_connected": neo4j_driver is not None,
+        "neo4j_configured": neo4j_driver is not None,
+        "neo4j_connected": neo4j_driver is not None and neo4j_available,
         "identity_note": IDENTITY_NOTE,
         "compact_profile_note": "Article lists retain all names; Author/Institution nodes may represent shared names only.",
         "endpoints": {
@@ -318,8 +341,8 @@ def article_lists(article, authors, institutions, reasons):
 
 @app.get("/ready")
 def ready():
-    if neo4j_driver:
-        records = query_neo4j("MATCH (n:RWGraph:Article) RETURN count(n) AS count")
+    records = with_fallback("MATCH (n:RWGraph:Article) RETURN count(n) AS count")
+    if records is not None:
         if not records or not records[0]["count"]:
             raise HTTPException(503, "No imported article records")
         return {"ready": True, "source": "neo4j"}
