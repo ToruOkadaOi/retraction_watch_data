@@ -93,6 +93,7 @@ Neo4j queries only read nodes imported by the current loader.
 | `GET /api/search` | `q` 1–500 characters, optional `node_type`, `limit` 1–500 |
 | `GET /api/articles/{record_id}` | Notice record, authors, journal, reasons, institutions |
 | `GET /api/articles/{record_id}/publication-notices` | Notices sharing an original DOI or PMID, paginated by record ID |
+| `GET /api/articles/{record_id}/citation-timeline` | Related notices and direct OpenCitations results by original DOI or PMID; up to 20 citing works per page |
 | `GET /api/journals/top` | Retraction notice counts; `limit` 1–100 |
 | `GET /api/reasons/top` | Retraction notice counts; `limit` 1–100 |
 
@@ -322,3 +323,28 @@ resume an instance using database credentials. See
 If Aura is running and requests still fail, inspect Render's application logs
 and verify `NEO4J_URI`, `NEO4J_USER`, and `NEO4J_PASSWORD` in Render's environment
 settings. Keep credentials out of source control and chat.
+
+
+### Citation timeline
+
+Open **Citation timeline** on a notice record to view indexed citing works beside the
+publication's notices. The API queries OpenCitations on demand and caches results
+briefly. The graph import is unchanged. Use the period menu to see works published
+before, between, or after recorded notice dates. A year or month only falls in a
+period when the entire possible date range fits. Missing dates and partial dates
+that overlap a notice go in the uncertain period. A same-day publication is listed
+separately because the order within that day is unknown.
+
+The graph snapshot hash applies to the notices. Citation results have a separate
+retrieval timestamp, and publication dates come from OpenCitations Index. Work
+titles, when available, come from OpenCitations Meta. An unavailable citation
+source returns 502. A successful response with no indexed citations reflects the
+source's coverage and lookup result.
+
+Choose **Show citing papers on graph** to see the original paper, linked notice
+records, and directed citation edges for the selected period. **Show more citing
+papers** adds the next batch within the canvas limits. Selecting a citing paper
+opens its publication link and OpenCitations evidence. **Back to neighborhood**
+restores the original graph. Citation graph exports include the selected period,
+notice snapshot hash, citation retrieval time, and source identifiers for visible
+edges.

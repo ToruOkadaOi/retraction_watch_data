@@ -1,10 +1,10 @@
-import { MAX_NODES, MAX_EDGES, NODE_COLORS, NOTICE_COLORS, KIND_LABELS, shortText, doiHref, displayDate, edgeId, mergeNeighborhood } from './logic.mjs';
+import { MAX_NODES, MAX_EDGES, NODE_COLORS, NOTICE_COLORS, KIND_LABELS, shortText, doiHref, displayDate, edgeId, mergeNeighborhood, citationNeighborhood } from './logic.mjs';
 
 const API = location.pathname.startsWith('/dashboard/') ? location.origin : 'https://retraction-watch-data.onrender.com';
 const $ = id => document.getElementById(id);
 const fmt = number => new Intl.NumberFormat('en').format(number || 0);
 const state = { kind: 'Article', q: '', notice: '', journal: '', reason: '', skip: 0, hasMore: false, selected: null,
-  graph: { nodes: [], edges: [] }, pages: new Map(), cap: false, busy: false, graphEpoch: 0, resultsEpoch: 0, detailEpoch: 0, overview: null };
+  graph: { nodes: [], edges: [] }, pages: new Map(), cap: false, busy: false, graphEpoch: 0, resultsEpoch: 0, detailEpoch: 0, overview: null, citationView: null };
 let cy = null;
 const detailsCache = new Map();
 
@@ -159,16 +159,20 @@ async function loadResults(autoSelect = false) {
     list.replaceChildren(empty); $('results-meta').textContent = 'Unavailable'; $('results-page').textContent = '';
   }
 }
+function visibleGraph() { return state.citationView?.graph || state.graph; }
+
 function initGraph() {
   if (cy || !window.cytoscape) return;
   cy = window.cytoscape({ container: $('network'), elements: [], minZoom: .12, maxZoom: 3, wheelSensitivity: .25,
     style: [
       { selector: 'node', style: { 'background-color': element => NODE_COLORS[element.data('type')] || '#bf8cc0', width: element => element.data('type') === 'Article' ? 46 : 54, height: element => element.data('type') === 'Article' ? 46 : 54, shape: 'ellipse', label: element => shortText(element.data('name'), 30), color: '#162433', 'font-family': 'Arial, sans-serif', 'font-size': 8, 'text-valign': 'center', 'text-halign': 'center', 'text-wrap': 'wrap', 'text-overflow-wrap': 'anywhere', 'text-max-width': 40, 'border-width': 1.5, 'border-color': '#ffffff', 'overlay-color': '#006fd6', 'overlay-padding': 6, 'overlay-shape': 'ellipse' } },
       { selector: 'edge', style: { width: 1, 'line-color': '#aab2be', opacity: .85, 'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#aab2be', 'arrow-scale': .6, label: element => element.data('type') === 'Retracted_For' ? 'Lists reason' : element.data('type').replaceAll('_', ' '), color: '#616b7a', 'font-size': 6, 'font-family': 'Arial, sans-serif', 'text-rotation': 'autorotate', 'text-background-color': '#f4f5f7', 'text-background-opacity': 1, 'text-background-padding': 2 } },
+      { selector: 'edge[type = "Cites"]', style: { 'line-color': '#21747c', 'target-arrow-color': '#21747c', width: 1.75 } },
+      { selector: 'edge[type = "Notice_for"]', style: { 'line-style': 'dashed' } },
       { selector: '.quiet-edge', style: { label: '' } },
       { selector: 'node:selected', style: { 'border-width': 3, 'border-color': '#006fd6', 'overlay-opacity': .12, 'font-weight': 'bold' } },
     ], layout: { name: 'preset' } });
-  cy.on('tap', 'node', event => { const node = state.graph.nodes.find(n => n.id === event.target.id()); if (node) selectNode(node); });
+  cy.on('tap', 'node', event => { const node = visibleGraph().nodes.find(n => n.id === event.target.id()); if (node) selectNode(node); });
   cy.on('mouseover', 'node', event => {
     const tip = $('graph-tooltip'), position = event.target.renderedPosition(); tip.textContent = `${KIND_LABELS[event.target.data('type')]} · ${event.target.data('name')}`; tip.hidden = false;
     tip.style.left = Math.max(8, Math.min(position.x + 15, $('network').clientWidth - Math.min(240, $('network').clientWidth - 16))) + 'px'; tip.style.top = Math.max(8, Math.min(position.y + 15, $('network').clientHeight - 100)) + 'px';
@@ -179,31 +183,44 @@ function initGraph() {
 function renderGraph() {
   initGraph();
   if (!cy) { $('graph-status').textContent = 'The graph renderer could not load. Record search and details remain available.'; return; }
+  const graph = visibleGraph();
+  const visibleNodes = new Set(graph.nodes.map(node => node.id));
+  const visibleEdges = new Set(graph.edges.map(edgeId));
   const existing = new Set(cy.nodes().map(node => node.id()));
   cy.batch(() => {
-    for (const node of state.graph.nodes) {
+    cy.edges().filter(edge => !visibleEdges.has(edge.id())).remove();
+    cy.nodes().filter(node => !visibleNodes.has(node.id())).remove();
+    for (const node of graph.nodes) {
       if (!existing.has(node.id)) cy.add({ group: 'nodes', data: { ...node } });
       else cy.getElementById(node.id).data(node);
     }
-    for (const edge of state.graph.edges) if (!cy.getElementById(edgeId(edge)).length) cy.add({ group: 'edges', data: { id: edgeId(edge), ...edge } });
+    for (const edge of graph.edges) if (!cy.getElementById(edgeId(edge)).length) cy.add({ group: 'edges', data: { id: edgeId(edge), ...edge } });
     cy.nodes().unselect(); if (state.selected) cy.getElementById(state.selected.id).select();
-    cy.edges().toggleClass('quiet-edge', state.graph.nodes.length > 45);
+    cy.edges().toggleClass('quiet-edge', graph.nodes.length > 45);
   });
-  cy.layout({ name: 'cose', animate: false, fit: true, padding: 40, nodeRepulsion: () => 6500, idealEdgeLength: () => 90, numIter: state.graph.nodes.length > 70 ? 500 : 300, randomize: existing.size === 0, componentSpacing: 80 }).run();
-  $('graph-placeholder').hidden = state.graph.nodes.length > 0;
-  $('graph-count').textContent = `${fmt(state.graph.nodes.length)} nodes · ${fmt(state.graph.edges.length)} connections`;
+  if (graph.nodes.length) {
+    cy.layout({ name: 'cose', animate: false, fit: true, padding: 40, nodeRepulsion: () => 6500, idealEdgeLength: () => 90, numIter: graph.nodes.length > 70 ? 500 : 300, randomize: !graph.nodes.some(node => existing.has(node.id)), componentSpacing: 80 }).run();
+  }
+  $('graph-placeholder').hidden = graph.nodes.length > 0 || !!state.citationView;
+  $('graph-count').textContent = `${fmt(graph.nodes.length)} nodes · ${fmt(graph.edges.length)} connections`;
   const select = $('visible-nodes'); select.replaceChildren(el('option', '', 'Select a node…')); select.firstChild.value = '';
-  for (const node of state.graph.nodes) { const option = el('option', '', KIND_LABELS[node.type] + ': ' + shortText(node.name, 80)); option.value = node.id; select.append(option); }
+  for (const node of graph.nodes) { const option = el('option', '', KIND_LABELS[node.type] + ': ' + shortText(node.name, 80)); option.value = node.id; select.append(option); }
   select.value = state.selected?.id || ''; updateGraphButtons();
 }
 function updateGraphButtons() {
+  const view = state.citationView;
   const page = state.selected && state.pages.get(state.selected.id), expand = $('expand-node');
-  expand.disabled = !state.selected || state.busy || state.cap || page && !page.has_more;
-  expand.textContent = state.busy ? 'Loading…' : page ? page.has_more ? 'Load next 30' : 'All connections loaded' : 'Expand selected';
-  for (const name of ['fit-graph', 'clear-graph', 'export-graph']) $(name).disabled = !state.graph.nodes.length;
+  expand.disabled = view ? view.loading || !view.hasMore || view.capped
+    : !state.selected || state.busy || state.cap || page && !page.has_more;
+  expand.textContent = view ? view.loading ? 'Loading citations…' : 'Show more citing papers'
+    : state.busy ? 'Loading…' : page ? page.has_more ? 'Load next 30' : 'All connections loaded' : 'Expand selected';
+  $('exit-citation-view').hidden = !view;
+  $('citation-legend').hidden = !view;
+  $('neighborhood-legend').hidden = !!view;
+  for (const name of ['fit-graph', 'clear-graph', 'export-graph']) $(name).disabled = !visibleGraph().nodes.length;
 }
 function clearGraph() {
-  state.graphEpoch++; state.detailEpoch++; state.graph = { nodes: [], edges: [] }; state.pages.clear(); state.cap = false; state.selected = null; state.busy = false;
+  state.graphEpoch++; state.detailEpoch++; state.graph = { nodes: [], edges: [] }; state.pages.clear(); state.cap = false; state.selected = null; state.busy = false; state.citationView = null;
   if (cy) cy.elements().remove(); $('graph-loading').hidden = true; $('graph-placeholder').hidden = false; $('graph-tooltip').hidden = true;
   $('graph-title').textContent = 'Select a starting point'; $('graph-count').textContent = '0 nodes · 0 connections'; $('graph-status').textContent = 'Select a node to inspect it. Expand to reveal connected records.';
   $('detail-content').replaceChildren(el('p', 'detail-note', 'Select an article or a connected name to inspect its source details.')); $('visible-nodes').replaceChildren(el('option', '', 'Select a node…')); $('visible-nodes').firstChild.value = ''; updateGraphButtons();
@@ -213,10 +230,12 @@ function selectNode(node) {
   state.selected = node; if (cy) { cy.nodes().unselect(); cy.getElementById(node.id).select(); }
   $('visible-nodes').value = node.id; updateGraphButtons();
   for (const item of $('results-list').querySelectorAll('.result-button')) { const selected = item.dataset.nodeId === node.id; item.classList.toggle('selected', selected); item.setAttribute('aria-pressed', String(selected)); }
-  if (node.type === 'Article') loadArticle(node); else renderEntity(node);
+  if (node.type === 'Article') loadArticle(node);
+  else if (node.type === 'Work' || node.type === 'CitingWork') renderCitationNode(node);
+  else renderEntity(node);
 }
 async function expandNode() {
-  if (!state.selected || state.busy || state.cap) return;
+  if (state.citationView || !state.selected || state.busy || state.cap) return;
   const node = state.selected, previous = state.pages.get(node.id); if (previous && !previous.has_more) return;
   const epoch = state.graphEpoch; state.busy = true; $('graph-loading').hidden = false; updateGraphButtons();
   try {
@@ -224,10 +243,10 @@ async function expandNode() {
     if (epoch !== state.graphEpoch) return;
     const merged = mergeNeighborhood(state.graph, page); state.graph = { nodes: merged.nodes, edges: merged.edges }; state.cap = merged.capped; state.pages.set(node.id, page); renderGraph();
     const loaded = (page.skip || 0) + page.returned_neighbors;
-    $('graph-status').textContent = state.cap ? `View limit reached (${MAX_NODES} nodes / ${MAX_EDGES} connections). Start from another record to explore a different neighborhood.` : `${KIND_LABELS[node.type]}: ${fmt(loaded)} of ${fmt(page.total_neighbors)} direct connections loaded${page.has_more ? '. Load more or select a neighboring node to expand.' : '. Select a neighboring node to continue.'}`;
-    if (state.selected?.id === node.id && node.type !== 'Article') renderEntity(node);
-  } catch (error) { if (epoch === state.graphEpoch) $('graph-status').textContent = error.message; }
-  finally { if (epoch === state.graphEpoch) { state.busy = false; $('graph-loading').hidden = true; updateGraphButtons(); if (state.selected && state.selected.type !== 'Article') renderEntity(state.selected); } }
+    if (!state.citationView) $('graph-status').textContent = state.cap ? `View limit reached (${MAX_NODES} nodes / ${MAX_EDGES} connections). Start from another record to explore a different neighborhood.` : `${KIND_LABELS[node.type]}: ${fmt(loaded)} of ${fmt(page.total_neighbors)} direct connections loaded${page.has_more ? '. Load more or select a neighboring node to expand.' : '. Select a neighboring node to continue.'}`;
+    if (!state.citationView && state.selected?.id === node.id && node.type !== 'Article') renderEntity(node);
+  } catch (error) { if (epoch === state.graphEpoch && !state.citationView) $('graph-status').textContent = error.message; }
+  finally { if (epoch === state.graphEpoch) { state.busy = false; $('graph-loading').hidden = true; updateGraphButtons(); if (!state.citationView && state.selected && state.selected.type !== 'Article') renderEntity(state.selected); } }
 }
 function sectionLabel(text) { return el('span', 'detail-label', text); }
 function listSection(label, names, shared = [], type = '') {
@@ -239,6 +258,12 @@ function listSection(label, names, shared = [], type = '') {
   if (names.length > 10) { const details = el('details', 'detail-source'); details.append(el('summary', '', `Show ${names.length - 10} more listed names`), list(names.slice(10))); fragment.append(details); }
   return fragment;
 }
+function openNotice(row) {
+  const id = 'Article:' + row.record_id;
+  const visible = state.citationView?.graph.nodes.find(node => node.id === id);
+  if (visible) selectNode(visible);
+  else chooseSeed({ id, type: 'Article', record_id: row.record_id, name: row.name });
+}
 async function showPublicationNotices(recordId, panel, epoch, skip = 0) {
   const path = '/api/articles/' + encodeURIComponent(recordId) + '/publication-notices';
   try {
@@ -248,7 +273,7 @@ async function showPublicationNotices(recordId, panel, epoch, skip = 0) {
     for (const row of data.notices) {
       const item = el('li', '');
       const link = button(row.retraction_nature + ' · ' + displayDate(row.retraction_date) + ' · Record ' + row.record_id,
-        () => chooseSeed({ id: 'Article:' + row.record_id, type: 'Article', record_id: row.record_id, name: row.name }),
+        () => openNotice(row),
         'name-button');
       item.append(link);
       notices.append(item);
@@ -260,6 +285,219 @@ async function showPublicationNotices(recordId, panel, epoch, skip = 0) {
     if (epoch !== state.detailEpoch) return;
     panel.replaceChildren(el('p', 'detail-note', 'Publication notices could not be loaded.'),
       button('Retry', () => showPublicationNotices(recordId, panel, epoch, skip), 'name-button'));
+  }
+}
+function citationPeriodLabel(period) {
+  if (period.id === 'notice-date') return 'On a notice date';
+  if (period.id === 'uncertain') return 'Date missing or period uncertain';
+  if (!period.after) return 'Before ' + displayDate(period.before);
+  if (!period.before) return 'After ' + displayDate(period.after);
+  return 'Between ' + displayDate(period.after) + ' and ' + displayDate(period.before);
+}
+
+function timelineDate(value) {
+  if (!value || value.length === 4) return value || 'Date unavailable';
+  if (value.length === 7) {
+    const [year, month] = value.split('-');
+    return new Intl.DateTimeFormat('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' })
+      .format(new Date(`${year}-${month}-01T00:00:00Z`));
+  }
+  return displayDate(value);
+}
+
+function workHref(doi, pmid) {
+  return (doi && doiHref(doi)) || (pmid && 'https://pubmed.ncbi.nlm.nih.gov/' + encodeURIComponent(pmid) + '/');
+}
+function citationSourceHref(oci) {
+  return 'https://opencitations.net/oci/' + encodeURIComponent(oci);
+}
+function externalLink(label, href) {
+  const link = el('a', 'detail-doi', label);
+  link.href = href;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  return link;
+}
+
+function addCitationPage(view, data) {
+  const notices = view.seedNotice && !data.notices.some(row => row.record_id === view.recordId)
+    ? [view.seedNotice, ...data.notices] : data.notices;
+  const merged = mergeNeighborhood(view.graph, citationNeighborhood({ ...data, notices }, view.recordId));
+  view.graph = { nodes: merged.nodes, edges: merged.edges };
+  view.capped = merged.capped;
+  view.total = data.filtered_count;
+  view.nextSkip = data.skip + data.citations.length;
+  view.hasMore = data.citations.length > 0 && view.nextSkip < view.total;
+  view.provenance = {
+    provider: data.citation_source,
+    retrieved_at: data.citation_retrieved_at,
+    source_sha256: data.source_sha256,
+  };
+  const period = data.periods.find(item => item.id === view.period);
+  view.periodName = period ? citationPeriodLabel(period) : 'All periods';
+}
+
+function reportCitationView(view, extra = '') {
+  const shown = view.graph.nodes.filter(node => node.type === 'CitingWork').length;
+  $('graph-status').textContent = `${view.periodName} · ${fmt(shown)} of ${fmt(view.total)} indexed citing papers.${view.capped ? ' Canvas limit reached. The timeline still lists all indexed results.' : ''}${extra}`;
+}
+
+async function showCitationsOnGraph(recordId, period, page, epoch, scroll = true) {
+  const previous = state.citationView;
+  const title = $('graph-title').textContent;
+  try {
+    const data = !page.skip ? page : await get('/api/articles/' + encodeURIComponent(recordId) + '/citation-timeline', { period, limit: 20 });
+    if (epoch !== state.detailEpoch) return;
+    const view = {
+      recordId, period, graph: { nodes: [], edges: [] },
+      previousTitle: previous?.previousTitle || title,
+      previousStatus: previous?.previousStatus || $('graph-status').textContent,
+      previousSelection: previous ? previous.previousSelection : state.selected,
+      loading: false,
+    };
+    const selectedNotice = state.selected?.record_id === recordId && state.selected.type === 'Article' ? state.selected : null;
+    if (selectedNotice) {
+      view.seedNotice = {
+        record_id: recordId, name: selectedNotice.name, retraction_nature: selectedNotice.retraction_nature,
+        retraction_date: selectedNotice.retraction_date,
+      };
+    }
+    addCitationPage(view, data);
+    state.citationView = view;
+    $('graph-title').textContent = 'Citation graph';
+    renderGraph();
+    reportCitationView(view);
+    if (scroll) $('network').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'nearest' });
+  } catch {
+    if (epoch === state.detailEpoch) $('graph-status').textContent = 'Citation graph could not be loaded. Try again from the timeline.';
+  }
+}
+
+async function loadMoreCitationsOnGraph() {
+  const view = state.citationView;
+  if (!view || view.loading || !view.hasMore || view.capped) return;
+  view.loading = true;
+  updateGraphButtons();
+  try {
+    const path = '/api/articles/' + encodeURIComponent(view.recordId) + '/citation-timeline';
+    const data = await get(path, { period: view.period, skip: view.nextSkip, limit: 20 });
+    if (state.citationView !== view) return;
+    const refreshed = data.citation_retrieved_at !== view.provenance.retrieved_at
+      || data.source_sha256 !== view.provenance.source_sha256;
+    if (refreshed) {
+      const first = await get(path, { period: view.period, limit: 20 });
+      if (state.citationView !== view) return;
+      view.graph = { nodes: [], edges: [] };
+      addCitationPage(view, first);
+      const selected = view.graph.nodes.find(node => node.id === state.selected?.id)
+        || view.graph.nodes.find(node => node.type === 'Work');
+      if (selected && selected.id !== state.selected?.id) selectNode(selected);
+    } else addCitationPage(view, data);
+    renderGraph();
+    reportCitationView(view, refreshed ? ' Citation results refreshed. Showing the first page again.' : '');
+  } catch {
+    if (state.citationView === view) reportCitationView(view, ' More citations could not be loaded. Try again.');
+  } finally {
+    if (state.citationView === view) { view.loading = false; updateGraphButtons(); }
+  }
+}
+
+function exitCitationView() {
+  const view = state.citationView;
+  if (!view) return;
+  state.citationView = null;
+  $('graph-title').textContent = view.previousTitle;
+  $('graph-status').textContent = view.previousStatus;
+  if (view.previousSelection) selectNode(view.previousSelection);
+  renderGraph();
+}
+
+function renderCitationNode(node) {
+  state.detailEpoch++;
+  const panel = $('detail-content');
+  panel.replaceChildren(el('span', 'eyebrow', KIND_LABELS[node.type]), el('h4', 'detail-heading', node.name));
+  const view = state.citationView;
+  if (node.type === 'Work') {
+    const [kind, ...parts] = node.identifier.split(':');
+    const identifier = parts.join(':');
+    const href = workHref(kind === 'doi' ? identifier : null, kind === 'pmid' ? identifier : null);
+    if (href) panel.append(externalLink('Open original paper', href));
+    panel.append(button('Open citation timeline', () => {
+      const notice = view.graph.nodes.find(row => row.record_id === view.recordId && row.type === 'Article');
+      if (notice) selectNode(notice);
+    }, 'name-button'));
+    return;
+  }
+  panel.append(el('p', 'detail-note', 'Published ' + timelineDate(node.publication_date)));
+  const href = workHref(node.doi, node.pmid);
+  if (href) panel.append(externalLink('Open citing paper', href));
+  panel.append(externalLink('OpenCitations evidence', citationSourceHref(node.oci)));
+  const original = view.graph.nodes.find(row => row.id === node.original_work_id);
+  if (original) panel.append(button('Inspect original paper', () => selectNode(original), 'name-button'));
+}
+
+async function showCitationTimeline(recordId, panel, epoch, period = 'all', skip = 0) {
+  const path = '/api/articles/' + encodeURIComponent(recordId) + '/citation-timeline';
+  const loading = el('p', 'detail-note', 'Loading indexed citations…');
+  loading.setAttribute('role', 'status');
+  panel.replaceChildren(loading);
+  try {
+    const data = await get(path, { period, skip, limit: 20 });
+    if (epoch !== state.detailEpoch) return;
+
+    const total = fmt(data.indexed_count);
+    const summary = el('p', 'detail-note', `${total} citing works indexed by OpenCitations. Coverage can be incomplete.`);
+    const filter = el('select', 'timeline-filter');
+    filter.setAttribute('aria-label', 'Filter citing works by publication period');
+    for (const option of [{ id: 'all', label: 'All periods', count: data.indexed_count }, ...data.periods]) {
+      const item = el('option', '', `${option.label || citationPeriodLabel(option)} (${fmt(option.count)})`);
+      item.value = option.id;
+      item.selected = option.id === period;
+      filter.append(item);
+    }
+    filter.addEventListener('change', () => showCitationTimeline(recordId, panel, epoch, filter.value));
+    panel.replaceChildren(summary, filter,
+      button('Show citing papers on graph', () => showCitationsOnGraph(recordId, period, data, epoch), 'name-button'));
+    if (state.citationView?.recordId === recordId && state.citationView.period !== period) {
+      showCitationsOnGraph(recordId, period, data, epoch, false);
+    }
+
+    if (data.notices_truncated) panel.append(el('p', 'detail-note', 'Only the first 100 related notices are shown. Publication periods are unavailable.'));
+    const events = [
+      ...data.notices.map(row => ({ date: row.timeline_date, notice: row })),
+      ...data.citations.map(row => ({ date: row.publication_date, citation: row })),
+    ].sort((a, b) => (a.date || '9999-99-99').localeCompare(b.date || '9999-99-99') || Number(Boolean(b.notice)) - Number(Boolean(a.notice)));
+    const list = el('ol', 'detail-list citation-timeline');
+    for (const event of events) {
+      const item = el('li', event.notice ? 'timeline-notice' : 'timeline-citation');
+      item.append(el('span', 'timeline-date', timelineDate(event.date)));
+      if (event.notice) {
+        const row = event.notice;
+        item.append(noticeBadge(row.retraction_nature),
+          button(`Open notice ${row.record_id}`, () => openNotice(row), 'name-button'));
+      } else {
+        const row = event.citation;
+        const href = workHref(row.doi, row.pmid);
+        const link = citationSourceHref(row.oci);
+        item.append(externalLink(row.title || row.doi || (row.pmid ? `PMID ${row.pmid}` : 'Indexed citing work'), href || link));
+        if (href) item.append(externalLink('Citation source', link));
+      }
+      list.append(item);
+    }
+    if (!data.filtered_count) panel.append(el('p', 'detail-note', 'No indexed citing works in this period.'));
+    panel.append(list);
+    if (data.filtered_count > 20) {
+      const navigation = el('div', 'timeline-pagination');
+      navigation.append(el('span', '', `${skip + 1}–${skip + data.citations.length} of ${fmt(data.filtered_count)} citing works`));
+      if (skip) navigation.append(button('Previous citations', () => showCitationTimeline(recordId, panel, epoch, period, skip - 20), 'name-button'));
+      if (skip + 20 < data.filtered_count) navigation.append(button('More citations', () => showCitationTimeline(recordId, panel, epoch, period, skip + 20), 'name-button'));
+      panel.append(navigation);
+    }
+    panel.append(el('p', 'detail-note', 'Periods use recorded notice dates and the citing works’ publication dates. A citation alone does not show reliance on the findings.'));
+  } catch {
+    if (epoch !== state.detailEpoch) return;
+    panel.replaceChildren(el('p', 'detail-note', 'Indexed citations could not be loaded.'),
+      button('Retry citations', () => showCitationTimeline(recordId, panel, epoch, period, skip), 'name-button'));
   }
 }
 async function loadArticle(node) {
@@ -282,6 +520,22 @@ async function loadArticle(node) {
     publication.append(el('summary', '', 'Publication notice history'),
       el('p', 'detail-note', 'Groups records by original DOI or PMID when the available identifiers agree.'), publicationNotices);
     panel.append(publication);
+    if (doi || /^doi:\s*10\.\d{4,9}\/\S+$/i.test((props.original_paper_doi || '').trim()) || /^[0-9]{1,18}$/.test(props.original_paper_pubmed_id || '') && Number(props.original_paper_pubmed_id) > 0) {
+      const timeline = el('details', 'detail-source');
+      const content = el('div', 'timeline-content');
+      const summary = el('summary', '', 'Citation timeline');
+      timeline.append(summary, content);
+      const view = state.citationView;
+      const period = view?.recordId === props.record_id ? view.period : 'all';
+      timeline.addEventListener('toggle', () => {
+        if (timeline.open && !content.hasChildNodes()) showCitationTimeline(props.record_id, content, epoch, period);
+      });
+      panel.append(timeline);
+      if (view?.recordId === props.record_id) {
+        timeline.open = true;
+        showCitationTimeline(props.record_id, content, epoch, period);
+      }
+    }
     panel.append(listSection('Listed author names', data.listed_authors || [], data.authors, 'Author'));
     panel.append(listSection('Listed institutions', data.listed_institutions || [], data.institutions, 'Institution'));
     panel.append(sectionLabel('Listed reasons'));
@@ -315,11 +569,18 @@ $('notice-filter').addEventListener('change', () => { state.notice = $('notice-f
 $('clear-filters').addEventListener('click', () => { state.notice = ''; state.journal = ''; state.reason = ''; applyFilters(); });
 $('previous-results').addEventListener('click', () => { state.skip = Math.max(0, state.skip - 20); loadResults(); $('results-list').scrollTop = 0; });
 $('next-results').addEventListener('click', () => { if (state.hasMore) { state.skip += 20; loadResults(); $('results-list').scrollTop = 0; } });
-$('expand-node').addEventListener('click', expandNode); $('clear-graph').addEventListener('click', clearGraph);
+$('expand-node').addEventListener('click', () => state.citationView ? loadMoreCitationsOnGraph() : expandNode());
+$('exit-citation-view').addEventListener('click', exitCitationView); $('clear-graph').addEventListener('click', clearGraph);
 $('fit-graph').addEventListener('click', () => cy?.fit(undefined, 40));
-$('visible-nodes').addEventListener('change', () => { const node = state.graph.nodes.find(n => n.id === $('visible-nodes').value); if (node) selectNode(node); });
+$('visible-nodes').addEventListener('change', () => { const node = visibleGraph().nodes.find(n => n.id === $('visible-nodes').value); if (node) selectNode(node); });
 $('export-graph').addEventListener('click', () => {
-  const payload = { snapshot: state.overview?.snapshot || null, filters: filters(), ...state.graph, scope: 'visible neighborhood only', identity_note: 'Nodes group source name strings; author-name matches are not verified identities.' };
+  const view = state.citationView;
+  const payload = {
+    snapshot: state.overview?.snapshot || null,
+    ...visibleGraph(),
+    ...(view ? { scope: 'visible citation graph', citation: { ...view.provenance, period: view.period, record_id: view.recordId } }
+      : { scope: 'visible neighborhood only', filters: filters(), identity_note: 'Nodes group source name strings; author-name matches are not verified identities.' }),
+  };
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })); const anchor = el('a'); anchor.href = url; anchor.download = 'retraction-watch-neighborhood.json'; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 $('identity-info').addEventListener('click', () => $('identity-dialog').showModal());

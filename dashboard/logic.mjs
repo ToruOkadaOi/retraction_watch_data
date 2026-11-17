@@ -1,8 +1,8 @@
 export const MAX_NODES = 150;
 export const MAX_EDGES = 300;
 export const NOTICE_COLORS = { Retraction: '#db6b6b', 'Expression of concern': '#d9ab3f', Correction: '#4c8eda', Reinstatement: '#63aa7b' };
-export const NODE_COLORS = { Article: '#4c8eda', Author: '#8dcc93', Institution: '#edc760', Journal: '#bf8cc0', Reason: '#e9a0b1' };
-export const KIND_LABELS = { Article: 'Notice record', Author: 'Author name', Institution: 'Institution name', Journal: 'Journal', Reason: 'Reason' };
+export const NODE_COLORS = { Article: '#4c8eda', Author: '#8dcc93', Institution: '#edc760', Journal: '#bf8cc0', Reason: '#e9a0b1', Work: '#f1c77f', CitingWork: '#88cbd1' };
+export const KIND_LABELS = { Article: 'Notice record', Author: 'Author name', Institution: 'Institution name', Journal: 'Journal', Reason: 'Reason', Work: 'Original paper', CitingWork: 'Citing paper' };
 export function shortText(value, maximum = 70) { const text = String(value ?? ''); return text.length > maximum ? text.slice(0, maximum - 1) + '…' : text; }
 export function doiHref(value) {
   const doi = String(value || '').trim().replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '');
@@ -35,4 +35,48 @@ export function mergeNeighborhood(current, page, maxNodes = MAX_NODES, maxEdges 
     edges.set(id, { ...edge });
   }
   return { nodes: [...nodes.values()], edges: [...edges.values()], dropped, capped: dropped > 0 || nodes.size >= maxNodes || edges.size >= maxEdges };
+}
+
+export function citationNeighborhood(data, recordId) {
+  const original = data.notices.find(row => row.record_id === recordId);
+  const center = {
+    id: 'Work:' + data.identifier,
+    type: 'Work',
+    name: original?.name || data.identifier,
+    identifier: data.identifier,
+    record_id: recordId,
+  };
+  const nodes = [center];
+  const edges = [];
+  for (const row of data.notices) {
+    const notice = {
+      id: 'Article:' + row.record_id,
+      type: 'Article',
+      record_id: row.record_id,
+      name: row.name || 'Notice ' + row.record_id,
+      retraction_nature: row.retraction_nature,
+      retraction_date: row.retraction_date,
+    };
+    nodes.push(notice);
+    edges.push({ source: notice.id, target: center.id, type: 'Notice_for' });
+  }
+  for (const row of data.citations) {
+    const work = {
+      id: 'CitingWork:' + row.oci,
+      type: 'CitingWork',
+      name: row.title || row.doi || (row.pmid ? 'PMID ' + row.pmid : 'Indexed citing paper'),
+      doi: row.doi,
+      pmid: row.pmid,
+      oci: row.oci,
+      publication_date: row.publication_date,
+      period: row.period,
+      original_work_id: center.id,
+    };
+    nodes.push(work);
+    edges.push({
+      source: work.id, target: center.id, type: 'Cites',
+      provider: data.citation_source, oci: row.oci,
+    });
+  }
+  return { center, nodes, edges };
 }

@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from neo4j import READ_ACCESS, GraphDatabase
 
 from aura_import import STATE_ID
+from citation_timeline import CitationSourceError, original_identifier, timeline
 from dashboard_api import create_dashboard_router
 from graph_schema import EDGE_TYPES, IDENTITY_NOTE, NODE_TYPES, validate_snapshot
 
@@ -371,7 +372,9 @@ def publication_notices(
             RETURN collect(n {.record_id, .name, .retraction_nature, .retraction_date}) AS notices
         }
         OPTIONAL MATCH (state:RWImportState {id: $state_id})
-        RETURN notices, state.generation AS snapshot_generation, state.source_csv_sha256 AS source_sha256
+        RETURN notices, a.original_paper_doi AS original_paper_doi,
+               a.original_paper_pubmed_id AS original_paper_pubmed_id,
+               state.generation AS snapshot_generation, state.source_csv_sha256 AS source_sha256
         """,
         {"record_id": record_id, "state_id": STATE_ID, "skip": skip, "fetch": limit + 1},
     )
@@ -409,6 +412,8 @@ def publication_notices(
         matches.sort(key=lambda n: (int(n["record_id"]), n["record_id"]))
         result = {
             "notices": matches[skip:skip + limit + 1],
+            "original_paper_doi": by_id[record_id].get("original_paper_doi"),
+            "original_paper_pubmed_id": by_id[record_id].get("original_paper_pubmed_id"),
             "snapshot_generation": data["metadata"].get("generated_at"),
             "source_sha256": data["metadata"].get("source_csv_sha256"),
         }
@@ -421,6 +426,26 @@ def publication_notices(
         "skip": skip,
         "limit": limit,
     }
+
+
+@app.get("/api/articles/{record_id}/citation-timeline")
+def citation_timeline(
+    record_id: str,
+    period: str = Query("all", pattern=r"^(all|notice-date|uncertain|interval-[0-9]{1,3})$"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=20),
+):
+    """Combine this publication's notices and indexed direct incoming citations."""
+    notices = publication_notices(record_id, limit=100, skip=0)
+    identifier = original_identifier(
+        notices.get("original_paper_doi"), notices.get("original_paper_pubmed_id")
+    )
+    if not identifier:
+        raise HTTPException(422, "No original DOI or PMID is available for citation lookup")
+    try:
+        return timeline(notices, identifier, period, skip, limit)
+    except CitationSourceError as exc:
+        raise HTTPException(502, "OpenCitations is temporarily unavailable") from exc
 
 
 @app.get("/ready")

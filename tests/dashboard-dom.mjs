@@ -29,9 +29,33 @@ function change(id,value) { $(id).value=value; $(id).dispatchEvent(new window.Ev
 const graphSnapshot = (await (await fetch(base + '/api/dashboard/overview')).json()).snapshot.source_sha256;
 const previewFetch = globalThis.fetch;
 let apiSnapshot = graphSnapshot;
-globalThis.fetch = (input, options) => String(input) === 'https://retraction-api.onrender.com/dataset'
-  ? Promise.resolve(Response.json({ source_sha256: apiSnapshot }))
-  : previewFetch(input, options);
+globalThis.fetch = (input, options) => {
+  const url = new URL(input);
+  if (url.href === 'https://retraction-api.onrender.com/dataset') {
+    return Promise.resolve(Response.json({ source_sha256: apiSnapshot }));
+  }
+  if (url.pathname.endsWith('/citation-timeline')) {
+    const before = url.searchParams.get('period') === 'interval-0';
+    const recordId = url.pathname.split('/')[3];
+    const skip = Number(url.searchParams.get('skip') || 0);
+    const citations = Array.from({ length: 21 }, (_, i) => ({
+      doi: `10.1000/example-${i}`, title: `Example citing review ${i + 1}`,
+      oci: `${i + 1}-2`, publication_date: '2021', period: 'interval-1',
+    }));
+    return Promise.resolve(Response.json({
+      identifier: 'doi:10.1000/original', skip, citation_source: 'OpenCitations',
+      citation_retrieved_at: '2026-11-18T12:00:00Z', source_sha256: graphSnapshot,
+      indexed_count: 21, filtered_count: before ? 0 : 21,
+      periods: [{ id: 'interval-0', before: '2020-08-01', count: 0 }, { id: 'interval-1', after: '2020-08-01', count: 21 }],
+      notices: [
+        { record_id: recordId, name: 'Example original', timeline_date: '2020-08-01', retraction_nature: 'Retraction' },
+        { record_id: '999999', name: 'Example original', timeline_date: '2020-09-01', retraction_nature: 'Reinstatement' },
+      ],
+      citations: before ? [] : citations.slice(skip, skip + 20),
+    }));
+  }
+  return previewFetch(input, options);
+};
 await import('../dashboard/app.mjs');
 await wait(()=>$('metric-records').textContent !== '—' && graph.nodes().length>0 && $('detail-content').querySelector('.detail-heading'),'initial dashboard');
 assert.equal($('metric-records').textContent,'200');
@@ -50,6 +74,41 @@ assert.ok(history);
 history.click();
 await wait(() => history.parentNode === null, 'publication notice history');
 assert.ok($('detail-content').querySelector('.detail-source .detail-list button'));
+const citationDetails = [...$('detail-content').querySelectorAll('details')].find(item => item.querySelector('summary').textContent === 'Citation timeline');
+assert.ok(citationDetails);
+citationDetails.open = true;
+citationDetails.dispatchEvent(new window.Event('toggle'));
+await wait(() => citationDetails.textContent.includes('Example citing review'), 'citation timeline');
+assert.ok(citationDetails.querySelector('.timeline-notice').textContent.includes('Retraction'));
+const citationPeriod = citationDetails.querySelector('select');
+citationPeriod.value = 'interval-0';
+citationPeriod.dispatchEvent(new window.Event('change'));
+await wait(() => citationDetails.textContent.includes('No indexed citing works in this period.'), 'citation period filter');
+const baseNodeIds = graph.nodes().map(node => node.id()).sort();
+assert.equal(graph.nodes().filter(node => node.data('type') === 'Work').length, 0);
+const showOnGraph = () => [...$('detail-content').querySelectorAll('button')].find(item => item.textContent === 'Show citing papers on graph');
+showOnGraph().click();
+await wait(() => !$('exit-citation-view').hidden && graph.nodes().length === 3, 'citation graph for empty filtered period');
+assert.equal(graph.edges().filter(edge => edge.data('type') === 'Cites').length, 0);
+assert.equal(graph.edges().filter(edge => edge.data('type') === 'Notice_for').length, 2);
+assert.equal($('expand-node').disabled, true);
+const activeFilter = citationDetails.querySelector('select');
+activeFilter.value = 'interval-1';
+activeFilter.dispatchEvent(new window.Event('change'));
+await wait(() => graph.edges().filter(edge => edge.data('type') === 'Cites').length === 20, 'citation filter updates graph');
+assert.ok(graph.edges().filter(edge => edge.data('type') === 'Cites').every(edge =>
+  edge.source().data('type') === 'CitingWork' && edge.target().data('type') === 'Work'));
+$('expand-node').click();
+await wait(() => graph.edges().filter(edge => edge.data('type') === 'Cites').length === 21, 'incremental citation expansion');
+assert.equal($('expand-node').disabled, true);
+graph.getElementById('CitingWork:1-2').emit('tap');
+assert.equal($('detail-content').querySelector('.detail-heading').textContent, 'Example citing review 1');
+assert.ok([...$('detail-content').querySelectorAll('a')].some(link => link.href.includes('opencitations.net/oci/1-2')));
+$('exit-citation-view').click();
+await wait(() => $('exit-citation-view').hidden && $('detail-content').querySelector('.detail-heading'), 'restore notice neighborhood');
+assert.deepEqual(graph.nodes().map(node => node.id()).sort(), baseNodeIds);
+
+
 const initialId = graph.nodes().filter(node=>node.data('type')==='Article')[0].data('record_id');
 $('search-input').value=initialId;
 $('search-form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));
@@ -75,6 +134,6 @@ $('identity-info').click();assert.ok($('identity-dialog').hasAttribute('open'));
 $('clear-graph').click();assert.equal(graph.nodes().length,0);
 assert.equal($('export-graph').disabled,true);
 assert.equal($('graph-placeholder').hidden,false);
-console.log('Functional DOM checks passed: overview, snapshot comparison, publication notice history, source details, search, paging, chart filters, graph expansion/selection, identity dialog, and clear.');
+console.log('Functional DOM checks passed: overview, snapshot comparison, publication notice history, citation timeline and graph expansion, source details, search, paging, chart filters, graph expansion/selection, identity dialog, and clear.');
 graph.destroy();
 process.exit(0);

@@ -168,6 +168,14 @@ button.detail-doi { background: white; border: 0; padding: 0; text-align: left; 
 .detail-source { margin-top: 18px; font-size: 10px; color: var(--muted); }
 .detail-source summary { cursor: pointer; }
 .detail-source pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 10px; line-height: 1.7; background: #f4f6f9; padding: 10px; border: 1px solid #e3e8ef; border-radius: 4px; }
+.timeline-filter { width: 100%; margin-bottom: 9px; padding: 5px; font: inherit; }
+.citation-timeline { border-left: 2px solid #c9d9e4; padding-left: 12px; }
+.citation-timeline li { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 7px; }
+.citation-timeline li::before { content: ''; position: absolute; top: .65em; left: -17px; width: 8px; height: 8px; background: #667f94; border: 1px solid white; border-radius: 50%; }
+.citation-timeline .timeline-notice::before { background: #b74655; }
+.timeline-date { flex-basis: 100%; color: var(--muted); font-variant-numeric: tabular-nums; }
+.timeline-pagination { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
 .detail-neighbor-list { margin-top: 15px; }
 .detail-neighbor-list button { display: block; width: 100%; font-size: 11px; padding: 9px 0; border: 0; border-top: 1px solid var(--line); text-align: left; color: var(--teal); background: transparent; border-radius: 0; line-height: 1.6; }
 .overview-section { padding: 30px 0; }
@@ -286,3 +294,7 @@ dialog p { font-size: 13px; color: var(--muted); line-height: 1.8; }
   :root { scroll-behavior: auto; }
   * { transition: none !important; }
 }
+
+.work-dot { background: #f1c77f; }
+.citing-dot { background: #88cbd1; }
+#exit-citation-view[hidden], .graph-legend[hidden] { display: none; }
