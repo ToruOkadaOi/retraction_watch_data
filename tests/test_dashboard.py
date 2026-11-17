@@ -189,3 +189,46 @@ def test_cors_and_static_dashboard(dashboard_client):
     assert "Retraction Watch graph" in client.get("/dashboard/").text
     assert client.get("/dashboard/app.mjs").status_code == 200
     assert client.get("/dashboard/vendor/cytoscape.min.js").status_code == 200
+
+
+@pytest.mark.parametrize("profile", ["full", "aura"])
+def test_publication_notices_group_compatible_original_identifiers(
+    profile, write_csv, tmp_path, monkeypatch
+):
+    from graph_schema import REQUIRED_COLUMNS
+    from knowledge_graph import KnowledgeGraphGenerator
+
+    path = write_csv(
+        [
+            {"OriginalPaperDOI": "10.1000/Work", "OriginalPaperPubMedID": "42"},
+            {"OriginalPaperDOI": "10.1000/work", "RetractionNature": "Correction"},
+            {"OriginalPaperPubMedID": "42", "RetractionNature": "Reinstatement"},
+            {"OriginalPaperDOI": "10.1000/work", "OriginalPaperPubMedID": "99"},
+            {"OriginalPaperDOI": "10.1000/unrelated", "OriginalPaperPubMedID": "42"},
+            {"RetractionDOI": "10.1000/work"},
+        ],
+        headers=sorted(REQUIRED_COLUMNS | {"OriginalPaperPubMedID"}),
+    )
+    generator = KnowledgeGraphGenerator(path, profile=profile)
+    generator.parse_csv()
+    graph_path = tmp_path / "publication-notices.json"
+    generator.export_to_json(graph_path)
+    data = json.loads(graph_path.read_text())
+    monkeypatch.setattr(api, "neo4j_driver", None)
+    monkeypatch.setattr(api, "json_data", data)
+
+    with TestClient(api.app) as client:
+        endpoint = "/api/articles/1/publication-notices"
+        response = client.get(endpoint, params={"limit": 2})
+        assert response.status_code == 200
+        page = response.json()
+        assert page["source_sha256"] == data["metadata"]["source_csv_sha256"]
+        assert [notice["record_id"] for notice in page["notices"]] == ["1", "2"]
+        assert page["has_more"] is True
+        rest = client.get(endpoint, params={"skip": 2}).json()
+        assert [notice["record_id"] for notice in rest["notices"]] == ["3"]
+        assert rest["has_more"] is False
+        assert client.get(endpoint, params={"skip": 100}).json()["notices"] == []
+        standalone = client.get("/api/articles/6/publication-notices").json()
+        assert [notice["record_id"] for notice in standalone["notices"]] == ["6"]
+        assert client.get("/api/articles/99/publication-notices").status_code == 404

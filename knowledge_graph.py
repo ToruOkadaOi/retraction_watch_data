@@ -219,6 +219,7 @@ class KnowledgeGraphGenerator:
             "article_type": row.get("ArticleType", ""),
             "retraction_doi": row.get("RetractionDOI", ""),
             "original_paper_doi": row.get("OriginalPaperDOI", ""),
+            "original_paper_pubmed_id": row.get("OriginalPaperPubMedID", ""),
             "paywalled": row.get("Paywalled", ""),
             "notes": row.get("Notes", ""),
             "urls": row.get("URLS", ""),

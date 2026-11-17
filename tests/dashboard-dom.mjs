@@ -26,6 +26,12 @@ window.cytoscape = options => { graph = cytoscape({ headless: true, elements: op
 const $ = id => document.getElementById(id);
 async function wait(check, description) { for (let i=0;i<120;i++) { if (check()) return; await new Promise(resolve=>setTimeout(resolve,100)); } throw new Error('Timed out: '+description); }
 function change(id,value) { $(id).value=value; $(id).dispatchEvent(new window.Event('change',{bubbles:true})); }
+const graphSnapshot = (await (await fetch(base + '/api/dashboard/overview')).json()).snapshot.source_sha256;
+const previewFetch = globalThis.fetch;
+let apiSnapshot = graphSnapshot;
+globalThis.fetch = (input, options) => String(input) === 'https://retraction-api.onrender.com/dataset'
+  ? Promise.resolve(Response.json({ source_sha256: apiSnapshot }))
+  : previewFetch(input, options);
 await import('../dashboard/app.mjs');
 await wait(()=>$('metric-records').textContent !== '—' && graph.nodes().length>0 && $('detail-content').querySelector('.detail-heading'),'initial dashboard');
 assert.equal($('metric-records').textContent,'200');
@@ -33,6 +39,17 @@ assert.equal(document.querySelectorAll('.notice-item').length,4);
 assert.ok(document.querySelectorAll('#journal-chart .bar-row').length>0);
 assert.ok(document.querySelectorAll('#reason-chart .bar-row').length>0);
 assert.ok($('detail-content').textContent.includes('Listed author names'));
+const compare = $('provenance').querySelector('button');
+compare.click();
+await wait(() => $('provenance').textContent.includes('use the same source CSV'), 'matching API snapshot');
+apiSnapshot = 'f'.repeat(64);
+compare.click();
+await wait(() => $('provenance').textContent.includes('use different source CSV snapshots'), 'different API snapshot');
+const history = [...$('detail-content').querySelectorAll('button')].find(item => item.textContent === 'Load publication notices');
+assert.ok(history);
+history.click();
+await wait(() => history.parentNode === null, 'publication notice history');
+assert.ok($('detail-content').querySelector('.detail-source .detail-list button'));
 const initialId = graph.nodes().filter(node=>node.data('type')==='Article')[0].data('record_id');
 $('search-input').value=initialId;
 $('search-form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));
@@ -58,6 +75,6 @@ $('identity-info').click();assert.ok($('identity-dialog').hasAttribute('open'));
 $('clear-graph').click();assert.equal(graph.nodes().length,0);
 assert.equal($('export-graph').disabled,true);
 assert.equal($('graph-placeholder').hidden,false);
-console.log('Functional DOM checks passed: overview, source details, search, paging, chart filters, graph expansion/selection, identity dialog, and clear.');
+console.log('Functional DOM checks passed: overview, snapshot comparison, publication notice history, source details, search, paging, chart filters, graph expansion/selection, identity dialog, and clear.');
 graph.destroy();
 process.exit(0);

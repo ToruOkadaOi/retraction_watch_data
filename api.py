@@ -268,7 +268,7 @@ def get_article(record_id: str):
         OPTIONAL MATCH (state:RWImportState {id: $state_id})
         RETURN a, collect(DISTINCT author) AS authors, j,
                collect(DISTINCT r) AS reasons, collect(DISTINCT i) AS institutions,
-               state.generation AS snapshot_generation
+               state.generation AS snapshot_generation, state.source_csv_sha256 AS source_sha256
         """,
         {"record_id": record_id, "state_id": STATE_ID},
     )
@@ -288,6 +288,7 @@ def get_article(record_id: str):
                 row["reasons"],
             ),
             "snapshot_generation": row.get("snapshot_generation"),
+            "source_sha256": row.get("source_sha256"),
             "article": properties(row["a"]),
             "authors": [properties(n) for n in row["authors"]],
             "journal": properties(row["j"]) if row["j"] else None,
@@ -313,6 +314,7 @@ def get_article(record_id: str):
     return {
         **article_lists(index[identity], authors, institutions, reasons),
         "snapshot_generation": json_data["metadata"].get("generated_at"),
+        "source_sha256": json_data["metadata"].get("source_csv_sha256"),
         "article": index[identity],
         "authors": authors,
         "journal": journals[0] if journals else None,
@@ -336,6 +338,88 @@ def article_lists(article, authors, institutions, reasons):
         "graph_profile": "aura" if compact else "full",
         "connected_entities": "shared_names_only" if compact else "all_listed_names",
         "identity_note": IDENTITY_NOTE,
+    }
+
+
+@app.get("/api/articles/{record_id}/publication-notices")
+def publication_notices(
+    record_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    skip: int = Query(0, ge=0),
+):
+    """Group notices by original publication identifiers, without transitive merges."""
+    records = with_fallback(
+        """
+        MATCH (a:RWGraph:Article {record_id: $record_id})
+        WITH a, toLower(trim(coalesce(a.original_paper_doi, ''))) AS doi,
+             CASE WHEN trim(coalesce(a.original_paper_pubmed_id, '')) =~ '[0-9]{1,18}'
+                  THEN toInteger(trim(a.original_paper_pubmed_id)) END AS pmid
+        CALL {
+            WITH a, doi, pmid
+            MATCH (n:RWGraph:Article)
+            WITH a, n, doi, pmid, toLower(trim(coalesce(n.original_paper_doi, ''))) AS other_doi,
+                 CASE WHEN trim(coalesce(n.original_paper_pubmed_id, '')) =~ '[0-9]{1,18}'
+                      THEN toInteger(trim(n.original_paper_pubmed_id)) END AS other_pmid
+            WHERE n = a OR (
+                ((doi STARTS WITH '10.' AND doi = other_doi) OR (pmid > 0 AND pmid = other_pmid))
+                AND (NOT (doi STARTS WITH '10.') OR NOT (other_doi STARTS WITH '10.') OR doi = other_doi)
+                AND (pmid IS NULL OR pmid <= 0 OR other_pmid IS NULL OR other_pmid <= 0 OR pmid = other_pmid)
+            )
+            WITH n
+            ORDER BY toInteger(n.record_id), n.record_id
+            SKIP $skip LIMIT $fetch
+            RETURN collect(n {.record_id, .name, .retraction_nature, .retraction_date}) AS notices
+        }
+        OPTIONAL MATCH (state:RWImportState {id: $state_id})
+        RETURN notices, state.generation AS snapshot_generation, state.source_csv_sha256 AS source_sha256
+        """,
+        {"record_id": record_id, "state_id": STATE_ID, "skip": skip, "fetch": limit + 1},
+    )
+    if records is not None:
+        if not records:
+            raise HTTPException(404, "Notice record not found")
+        result = records[0]
+    else:
+        data = json_data
+        by_id = {
+            node["properties"]["record_id"]: node["properties"]
+            for node in data["nodes"]
+            if node["properties"]["type"] == "Article"
+        }
+        if record_id not in by_id:
+            raise HTTPException(404, "Notice record not found")
+
+        def identifiers(notice):
+            doi = notice.get("original_paper_doi", "").strip().lower()
+            pmid = notice.get("original_paper_pubmed_id", "").strip()
+            valid_pmid = pmid.isascii() and pmid.isdecimal() and len(pmid) <= 18
+            return doi if doi.startswith("10.") else "", int(pmid) if valid_pmid else 0
+
+        doi, pmid = identifiers(by_id[record_id])
+        matches = []
+        for notice in by_id.values():
+            other_doi, other_pmid = identifiers(notice)
+            same = (doi and doi == other_doi) or (pmid and pmid == other_pmid)
+            conflict = (doi and other_doi and doi != other_doi) or (pmid and other_pmid and pmid != other_pmid)
+            if notice["record_id"] == record_id or (same and not conflict):
+                matches.append({
+                    key: notice.get(key)
+                    for key in ("record_id", "name", "retraction_nature", "retraction_date")
+                })
+        matches.sort(key=lambda n: (int(n["record_id"]), n["record_id"]))
+        result = {
+            "notices": matches[skip:skip + limit + 1],
+            "snapshot_generation": data["metadata"].get("generated_at"),
+            "source_sha256": data["metadata"].get("source_csv_sha256"),
+        }
+
+    notices = result["notices"]
+    return {
+        **result,
+        "notices": notices[:limit],
+        "has_more": len(notices) > limit,
+        "skip": skip,
+        "limit": limit,
     }
 
 

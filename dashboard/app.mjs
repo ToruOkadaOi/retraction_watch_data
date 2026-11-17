@@ -65,6 +65,29 @@ function drawBars(container, rows, kind) {
     const track = el('span', 'bar-track'), fill = el('span', 'bar-fill'); fill.style.width = 100 * row.count / maximum + '%'; track.append(fill); item.append(label, track); container.append(item);
   }
 }
+async function compareApiSnapshot(graphHash, status, control) {
+  control.disabled = true;
+  status.textContent = 'Checking API snapshot…';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch('https://retraction-api.onrender.com/dataset', {
+      signal: controller.signal, credentials: 'omit',
+    });
+    if (!response.ok) throw new Error('API snapshot unavailable');
+    const { source_sha256: apiHash } = await response.json();
+    status.textContent = !apiHash || !graphHash ? 'Snapshot match could not be verified.'
+      : apiHash === graphHash ? 'Graph and API use the same source CSV.'
+      : 'Graph and API use different source CSV snapshots.';
+    status.title = apiHash || '';
+  } catch {
+    status.textContent = 'API snapshot could not be verified. Try again later.';
+  } finally {
+    clearTimeout(timer);
+    control.disabled = false;
+  }
+}
+
 function renderOverview(data) {
   if (state.overview?.snapshot?.generation && state.overview.snapshot.generation !== data.snapshot?.generation) { detailsCache.clear(); clearGraph(); }
   state.overview = data;
@@ -73,13 +96,16 @@ function renderOverview(data) {
   $('metric-nodes').textContent = fmt(data.total_nodes);
   $('metric-edges').textContent = fmt(data.total_relationships);
   $('connection-badge').classList.remove('error'); $('connection-badge').lastElementChild.textContent = data.source === 'neo4j' ? 'Connected · Neo4j Aura' : 'Connected · JSON snapshot';
-  const snapshot = data.snapshot || {}, hash = snapshot.source_csv_sha256;
+  const snapshot = data.snapshot || {}, hash = snapshot.source_sha256 || snapshot.source_csv_sha256;
   $('snapshot-label').textContent = hash ? 'Snapshot ' + hash.slice(0, 12) : 'Snapshot fingerprint unavailable';
   $('snapshot-label').title = hash || '';
   $('provenance').replaceChildren(el('div', '', hash ? 'Source CSV SHA-256: ' + shortText(hash, 25) : 'Source CSV fingerprint not recorded.'));
   if (hash) $('provenance').firstChild.title = hash;
   $('provenance').append(el('div', '', snapshot.imported_at ? 'Imported ' + displayDate(snapshot.imported_at) : 'Import time not recorded for this snapshot.'));
-  $('provenance').append(el('div', '', 'Hosted refreshes run separately from repository CSV updates.'));
+  const comparison = el('div', '');
+  comparison.setAttribute('role', 'status');
+  const compare = button('Compare with API snapshot', () => compareApiSnapshot(hash, comparison, compare), 'name-button');
+  $('provenance').append(compare, comparison);
   const total = Object.values(data.notice_counts).reduce((sum, value) => sum + value, 0);
   const breakdown = $('notice-breakdown'); breakdown.replaceChildren();
   for (const [name, count] of Object.entries(data.notice_counts)) {
@@ -109,18 +135,18 @@ function resultView(node) {
 async function loadResults(autoSelect = false) {
   const epoch = ++state.resultsEpoch, list = $('results-list'); list.replaceChildren();
   for (let index = 0; index < 4; index++) list.append(el('div', 'loading-row'));
-  $('results-title').textContent = { Article: 'Article records', Author: 'Shared author names', Institution: 'Shared institution names', Journal: 'Journals' }[state.kind];
+  $('results-title').textContent = { Article: 'Notice records', Author: 'Shared author names', Institution: 'Shared institution names', Journal: 'Journals' }[state.kind];
   $('results-meta').textContent = 'Loading…'; $('previous-results').disabled = true; $('next-results').disabled = true;
   $('results-context').textContent = state.kind === 'Article' ? 'Ordered by record ID, highest first.' : 'Only entities represented as connected graph nodes.';
   if (state.kind !== 'Article' && !state.q) {
-    list.replaceChildren(el('div', 'empty-results', 'Enter a name above to search connected entities. Singleton names are searchable under Article records.'));
+    list.replaceChildren(el('div', 'empty-results', 'Enter a name above to search connected entities. Singleton names are searchable under Notice records.'));
     $('results-meta').textContent = ''; $('results-page').textContent = ''; return;
   }
   try {
     const data = await get(state.kind === 'Article' ? '/api/dashboard/records' : '/api/dashboard/entities', state.kind === 'Article' ? { q: state.q, ...filters(), skip: state.skip, limit: 20 } : { q: state.q, kind: state.kind, limit: 20 });
     if (epoch !== state.resultsEpoch) return;
     const rows = data.records || data.nodes; list.replaceChildren(...rows.map(resultView));
-    if (!rows.length) { const empty = el('div', 'empty-results'); empty.append(el('strong', '', 'No matches in this view.'), el('span', '', state.kind === 'Article' ? 'Try a different term or clear the active filters.' : 'Try Article records to include names that have no separate graph node.')); list.append(empty); }
+    if (!rows.length) { const empty = el('div', 'empty-results'); empty.append(el('strong', '', 'No matches in this view.'), el('span', '', state.kind === 'Article' ? 'Try a different term or clear the active filters.' : 'Try Notice records to include names that have no separate graph node.')); list.append(empty); }
     $('results-meta').textContent = rows.length ? `${rows.length} shown` : '0 matches';
     state.hasMore = data.has_more;
     $('previous-results').disabled = state.kind !== 'Article' || state.skip === 0;
@@ -138,7 +164,7 @@ function initGraph() {
   cy = window.cytoscape({ container: $('network'), elements: [], minZoom: .12, maxZoom: 3, wheelSensitivity: .25,
     style: [
       { selector: 'node', style: { 'background-color': element => NODE_COLORS[element.data('type')] || '#bf8cc0', width: element => element.data('type') === 'Article' ? 46 : 54, height: element => element.data('type') === 'Article' ? 46 : 54, shape: 'ellipse', label: element => shortText(element.data('name'), 30), color: '#162433', 'font-family': 'Arial, sans-serif', 'font-size': 8, 'text-valign': 'center', 'text-halign': 'center', 'text-wrap': 'wrap', 'text-overflow-wrap': 'anywhere', 'text-max-width': 40, 'border-width': 1.5, 'border-color': '#ffffff', 'overlay-color': '#006fd6', 'overlay-padding': 6, 'overlay-shape': 'ellipse' } },
-      { selector: 'edge', style: { width: 1, 'line-color': '#aab2be', opacity: .85, 'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#aab2be', 'arrow-scale': .6, label: element => element.data('type').replaceAll('_', ' '), color: '#616b7a', 'font-size': 6, 'font-family': 'Arial, sans-serif', 'text-rotation': 'autorotate', 'text-background-color': '#f4f5f7', 'text-background-opacity': 1, 'text-background-padding': 2 } },
+      { selector: 'edge', style: { width: 1, 'line-color': '#aab2be', opacity: .85, 'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#aab2be', 'arrow-scale': .6, label: element => element.data('type') === 'Retracted_For' ? 'Lists reason' : element.data('type').replaceAll('_', ' '), color: '#616b7a', 'font-size': 6, 'font-family': 'Arial, sans-serif', 'text-rotation': 'autorotate', 'text-background-color': '#f4f5f7', 'text-background-opacity': 1, 'text-background-padding': 2 } },
       { selector: '.quiet-edge', style: { label: '' } },
       { selector: 'node:selected', style: { 'border-width': 3, 'border-color': '#006fd6', 'overlay-opacity': .12, 'font-weight': 'bold' } },
     ], layout: { name: 'preset' } });
@@ -213,6 +239,29 @@ function listSection(label, names, shared = [], type = '') {
   if (names.length > 10) { const details = el('details', 'detail-source'); details.append(el('summary', '', `Show ${names.length - 10} more listed names`), list(names.slice(10))); fragment.append(details); }
   return fragment;
 }
+async function showPublicationNotices(recordId, panel, epoch, skip = 0) {
+  const path = '/api/articles/' + encodeURIComponent(recordId) + '/publication-notices';
+  try {
+    const data = await get(path, { skip, limit: 20 });
+    if (epoch !== state.detailEpoch) return;
+    const notices = el('ul', 'detail-list');
+    for (const row of data.notices) {
+      const item = el('li', '');
+      const link = button(row.retraction_nature + ' · ' + displayDate(row.retraction_date) + ' · Record ' + row.record_id,
+        () => chooseSeed({ id: 'Article:' + row.record_id, type: 'Article', record_id: row.record_id, name: row.name }),
+        'name-button');
+      item.append(link);
+      notices.append(item);
+    }
+    panel.replaceChildren(notices);
+    if (skip) panel.append(button('Previous notices', () => showPublicationNotices(recordId, panel, epoch, skip - 20), 'name-button'));
+    if (data.has_more) panel.append(button('More notices', () => showPublicationNotices(recordId, panel, epoch, skip + 20), 'name-button'));
+  } catch {
+    if (epoch !== state.detailEpoch) return;
+    panel.replaceChildren(el('p', 'detail-note', 'Publication notices could not be loaded.'),
+      button('Retry', () => showPublicationNotices(recordId, panel, epoch, skip), 'name-button'));
+  }
+}
 async function loadArticle(node) {
   const epoch = ++state.detailEpoch, panel = $('detail-content'); panel.replaceChildren(el('p', 'detail-note', 'Loading the source record…'));
   try {
@@ -226,12 +275,21 @@ async function loadArticle(node) {
     panel.append(dates);
     if (data.journal) { panel.append(sectionLabel('Journal')); const link = button(data.journal.name + ' ↗', () => chooseSeed({ id: 'Journal:' + data.journal.name, type: 'Journal', name: data.journal.name }), 'name-button detail-doi'); panel.append(link); }
     const doi = doiHref(props.original_paper_doi); if (doi) { const link = el('a', 'detail-doi', 'Original paper DOI ↗'); link.href = doi; link.target = '_blank'; link.rel = 'noopener'; panel.append(sectionLabel('Source link'), link); }
+    const publication = el('details', 'detail-source');
+    const publicationNotices = el('div', '');
+    const loadNotices = button('Load publication notices', () => showPublicationNotices(props.record_id, publicationNotices, epoch), 'name-button');
+    publicationNotices.append(loadNotices);
+    publication.append(el('summary', '', 'Publication notice history'),
+      el('p', 'detail-note', 'Groups records by original DOI or PMID when the available identifiers agree.'), publicationNotices);
+    panel.append(publication);
     panel.append(listSection('Listed author names', data.listed_authors || [], data.authors, 'Author'));
     panel.append(listSection('Listed institutions', data.listed_institutions || [], data.institutions, 'Institution'));
     panel.append(sectionLabel('Listed reasons'));
     const reasons = el('ul', 'detail-list'); for (const reason of [...new Set(data.listed_reasons || [])]) { const li = el('li'); li.append(button(reason, () => { chartFilter('reason', reason, ''); }, 'name-button')); reasons.append(li); } panel.append(reasons.childNodes.length ? reasons : el('p', 'detail-note', 'Not recorded'));
     if (props.notes) { panel.append(sectionLabel('Notes'), el('p', 'detail-note', props.notes)); }
-    panel.append(el('p', 'detail-note', 'Linked names have shared graph nodes. Unlinked names remain complete source-list entries. Name matches do not establish a person’s identity.'));
+    panel.append(el('p', 'detail-note', data.connected_entities === 'shared_names_only'
+      ? 'The compact graph connects shared names. It retains singleton names and reasons on each notice. Names are source mentions.'
+      : 'Names are source mentions. The dataset does not verify identities or link individual authors to institutions.'));
     if (props.source_record) { const details = el('details', 'detail-source'); let source; try { source = JSON.stringify(JSON.parse(props.source_record), null, 2); } catch { source = props.source_record; } details.append(el('summary', '', 'View original source fields'), el('pre', '', source)); panel.append(details); }
   } catch (error) { if (epoch !== state.detailEpoch) return; panel.replaceChildren(el('p', 'detail-note', error.message), button('Retry record', () => loadArticle(node), 'error-retry')); }
 }

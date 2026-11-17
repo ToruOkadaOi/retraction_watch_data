@@ -91,7 +91,8 @@ Neo4j queries only read nodes imported by the current loader.
 | `GET /api/statistics` | Actual node/edge counts, totals, and source |
 | `GET /api/nodes/{node_type}` | `limit` 1–1000, `skip` ≥0; stable ID order |
 | `GET /api/search` | `q` 1–500 characters, optional `node_type`, `limit` 1–500 |
-| `GET /api/articles/{record_id}` | Article, authors, journal, reasons, institutions |
+| `GET /api/articles/{record_id}` | Notice record, authors, journal, reasons, institutions |
+| `GET /api/articles/{record_id}/publication-notices` | Notices sharing an original DOI or PMID, paginated by record ID |
 | `GET /api/journals/top` | Retraction notice counts; `limit` 1–100 |
 | `GET /api/reasons/top` | Retraction notice counts; `limit` 1–100 |
 
@@ -121,6 +122,13 @@ RETURN j.name AS journal, count(DISTINCT a) AS retraction_count
 ORDER BY retraction_count DESC, journal
 LIMIT 10
 ```
+
+The publication notice view groups records with a shared original DOI or PMID.
+It excludes records with a conflicting original identifier and does not merge
+through intermediate records. The selected notice remains visible when it has
+no usable original identifier. Rebuild older exports to include original PMIDs
+as graph properties. The view retains existing `Article:<Record ID>` identifiers
+and exposes the source CSV hash as `source_sha256` when known.
 
 Historical notice counts do not resolve a publication's current status. Reinstated
 papers can also have earlier retraction records.
@@ -290,7 +298,7 @@ The dashboard uses these bounded routes:
 
 The frontend requests 30 neighbors at a time and limits the visible graph to 150 nodes and 300 edges. Search and graph responses omit large narrative/source fields; selecting an article retrieves its complete detail separately. Export includes only the visible graph, its active filters, and snapshot provenance. Overview counts describe the whole hosted snapshot, while explorer filters apply to the records and article neighbors. Journal counts do not measure retraction rates, publication volume, or research quality.
 
-Shared name strings are not resolved people or verified affiliations. The compact profile retains singleton names and reasons in article properties; the dashboard shows those complete lists without inventing graph edges. Hosted refreshes are independent of CSV updates. New imports record their completion time; existing snapshots may have no recorded import time. Snapshot generation checks prevent combining responses across an import.
+Shared name strings are not resolved people or verified affiliations. The compact profile retains singleton names and reasons in article properties; the dashboard shows those complete lists without inventing graph edges. Hosted refreshes are independent of CSV updates. Use **Compare with API snapshot** in the dashboard to check the public REST API’s CSV hash against the graph’s. Equal hashes identify equal source CSV bytes; the compact profile still projects a subset of relationships. New imports record their completion time; existing snapshots may have no recorded import time. Snapshot generation checks prevent combining responses across an import.
 
 For a disposable local preview, install Python requirements and run `python scripts/preview_dashboard.py`, then open `http://localhost:8765/dashboard/`. This builds a temporary 200-record sample from the real CSV and does not connect to Aura or replace exports. Node 20 or later is needed only for frontend checks: `npm install`, `npm test`, and, with the preview running, `npm run test:dom`. CI also checks the actual queries against Neo4j. DOM tests exercise interactions with a headless graph model; they do not verify browser rendering.
 

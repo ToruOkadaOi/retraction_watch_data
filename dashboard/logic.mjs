@@ -2,7 +2,7 @@ export const MAX_NODES = 150;
 export const MAX_EDGES = 300;
 export const NOTICE_COLORS = { Retraction: '#db6b6b', 'Expression of concern': '#d9ab3f', Correction: '#4c8eda', Reinstatement: '#63aa7b' };
 export const NODE_COLORS = { Article: '#4c8eda', Author: '#8dcc93', Institution: '#edc760', Journal: '#bf8cc0', Reason: '#e9a0b1' };
-export const KIND_LABELS = { Article: 'Article record', Author: 'Author name', Institution: 'Institution name', Journal: 'Journal', Reason: 'Reason' };
+export const KIND_LABELS = { Article: 'Notice record', Author: 'Author name', Institution: 'Institution name', Journal: 'Journal', Reason: 'Reason' };
 export function shortText(value, maximum = 70) { const text = String(value ?? ''); return text.length > maximum ? text.slice(0, maximum - 1) + '…' : text; }
 export function doiHref(value) {
   const doi = String(value || '').trim().replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '');

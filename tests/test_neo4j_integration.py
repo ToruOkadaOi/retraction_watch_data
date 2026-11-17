@@ -274,6 +274,12 @@ def test_dashboard_queries_on_real_neo4j(database, aura_snapshot, monkeypatch):
         generation = overview.json()["snapshot"]["generation"]
         assert records.json()["snapshot_generation"] == generation
         assert client.get("/api/articles/1").json()["snapshot_generation"] == generation
+        notices = client.get("/api/articles/1/publication-notices")
+        assert notices.status_code == 200, notices.text
+        assert notices.json()["snapshot_generation"] == generation
+        assert notices.json()["source_sha256"] == overview.json()["snapshot"]["source_sha256"]
+        assert [notice["record_id"] for notice in notices.json()["notices"]] == ["1"]
+        assert client.get("/api/articles/1/publication-notices?skip=999").json()["notices"] == []
         assert [n["record_id"] for n in records.json()["records"]] == ["3", "1"]
         assert (
             client.get("/api/dashboard/records", params={"q": "Singleton"}).json()[

@@ -179,6 +179,7 @@ def create_dashboard_router(run, get_data):
                 "top_journals": row["journals"],
                 "top_reasons": row["reasons"],
             }
+        response["snapshot"]["source_sha256"] = response["snapshot"].get("source_csv_sha256")
         if not response["nodes"].get("Article"):
             raise HTTPException(503, "No imported article records")
         response["notice_counts"] = {
