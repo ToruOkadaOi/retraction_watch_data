@@ -6,13 +6,13 @@ import re
 import time
 from bisect import bisect_left, bisect_right
 from collections import Counter
+from contextlib import closing
 from datetime import date, datetime, timezone
 from functools import lru_cache
+from http.client import HTTPException, HTTPSConnection
 from urllib.parse import quote
 
-import httpx
-
-BASE_URL = "https://api.opencitations.net"
+PROVIDER_HOST = "api.opencitations.net"
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 CACHE_SECONDS = 900
 DOI_PATTERN = r"10\.\d{4,9}/\S+"
@@ -39,19 +39,20 @@ def original_identifier(doi, pmid):
 
 def provider_rows(path):
     try:
-        with httpx.stream(
-            "GET", BASE_URL + path, timeout=8, headers={"Accept": "application/json"}
-        ) as response:
-            response.raise_for_status()
-            body = bytearray()
-            for chunk in response.iter_bytes():
-                body.extend(chunk)
-                if len(body) > MAX_RESPONSE_BYTES:
+        with closing(HTTPSConnection(PROVIDER_HOST, timeout=8)) as connection:
+            connection.request("GET", path, headers={"Accept": "application/json"})
+            with connection.getresponse() as response:
+                if not 200 <= response.status < 300:
                     raise CitationSourceError(
-                        "Citation source response exceeded the size limit"
+                        f"OpenCitations returned HTTP {response.status}"
                     )
+                body = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise CitationSourceError(
+                "Citation source response exceeded the size limit"
+            )
         rows = json.loads(body)
-    except (httpx.HTTPError, ValueError) as exc:
+    except (HTTPException, OSError, ValueError) as exc:
         raise CitationSourceError("OpenCitations did not return usable data") from exc
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
         raise CitationSourceError("OpenCitations returned an unexpected response")

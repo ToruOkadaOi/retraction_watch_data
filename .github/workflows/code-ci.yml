@@ -36,6 +36,10 @@ jobs:
           node-version: '20'
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: node --test tests/dashboard.test.mjs
+      - name: Verify API imports with runtime dependencies
+        run: |
+          pip install -r requirements.txt
+          python -c "from api import app; assert '/api/articles/{record_id}/citation-timeline' in app.openapi()['paths']"
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
         env:
