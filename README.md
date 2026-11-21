@@ -1,6 +1,6 @@
 # Retraction Watch Data
 
-This repository contains the latest mirrored snapshot of [Crossref's Retraction Watch dataset](https://gitlab.com/crossref/retraction-watch-data), generated on **2026-11-19**.
+This repository contains the latest mirrored snapshot of [Crossref's Retraction Watch dataset](https://gitlab.com/crossref/retraction-watch-data), generated on **2026-11-20**.
 
 The dataset is accompanied by a knowledge graph and an interactive research dashboard.
 
